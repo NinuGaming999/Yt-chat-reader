@@ -997,7 +997,8 @@ def config_get():
     return jsonify({"api_key_set": bool(cfg.get("api_key")), "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY), "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False)})
 
 
-@app.route("/api/config", methods=["POST"])def config_post():
+@app.route("/api/config", methods=["POST"])
+def config_post():
     payload = request.get_json(silent=True) or {}
     try:
         return jsonify({"ok": True, **save_config(payload)})
