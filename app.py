@@ -18,6 +18,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
+from speech_engine import DEFAULT_SPEED, DEFAULT_VOICE, DEFAULT_VOLUME, NeuralSpeechEngine, VOICE_CATALOG
+
 import requests
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -27,7 +29,7 @@ except ImportError:
     webview = None
 
 APP_NAME = "NinuGaming Live Assistant"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 DAILY_RUNTIME_LIMIT_SECONDS = 4 * 60 * 60
@@ -441,12 +443,25 @@ class LiveAssistant:
         self.next_poll_in = 0
         self.last_runtime_tick = 0.0
         self.session_started = ""
-        self.speech_rate = 175
-        self.speech_volume = 100
-        self.speech_process: subprocess.Popen[str] | None = None
+        stored = safe_read_json(CONFIG_FILE, {})
+        if not isinstance(stored, dict):
+            stored = {}
+        self.shutdown_event = threading.Event()
+        self.tts = NeuralSpeechEngine(
+            Path(__file__).resolve().parent,
+            on_status=self._on_tts_status,
+            voice=stored.get("tts_voice", DEFAULT_VOICE),
+            speed=stored.get("tts_speed", DEFAULT_SPEED),
+            volume=stored.get("tts_volume", DEFAULT_VOLUME),
+        )
         self.speech_thread = threading.Thread(target=self._speech_loop, name="speech-worker", daemon=True)
         self.speech_thread.start()
-        self.log("Desktop assistant initialized. Local speech worker is starting.")
+        self.log("Desktop assistant initialized. Kokoro neural voice model is loading in the background.")
+
+    def _on_tts_status(self, status: str, level: str = "info") -> None:
+        self.log(status, level)
+        with self.speech_condition:
+            self.speech_condition.notify_all()
 
     def log(self, message: str, level: str = "info") -> None:
         row = {"time": datetime.now().strftime("%H:%M:%S"), "level": level, "message": str(message)[:500]}
@@ -801,112 +816,50 @@ class LiveAssistant:
         self.log(f"Cleared {count} queued speech item(s).", "warning")
         return count
 
-    @staticmethod
-    def _powershell_command() -> list[str]:
-        script = r"""
-$ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-Add-Type -AssemblyName System.Speech
-$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-[Console]::Out.WriteLine('READY')
-[Console]::Out.Flush()
-while (($line = [Console]::In.ReadLine()) -ne $null) {
-  try {
-    $item = ConvertFrom-Json -InputObject $line
-    $synth.Rate = [Math]::Max(-10, [Math]::Min(10, [int]$item.rate))
-    $synth.Volume = [Math]::Max(0, [Math]::Min(100, [int]$item.volume))
-    $synth.Speak([string]$item.text)
-    [Console]::Out.WriteLine('OK')
-  } catch {
-    $msg = $_.Exception.Message.Replace("`r", ' ').Replace("`n", ' ')
-    [Console]::Out.WriteLine(('ERR ' + $msg))
-  }
-  [Console]::Out.Flush()
-}
-$synth.Dispose()
-"""
-        encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-        return ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded]
-
-    def _start_speech_process(self) -> subprocess.Popen[str] | None:
-        if sys.platform != "win32":
-            return None
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        try:
-            proc = subprocess.Popen(
-                self._powershell_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-                bufsize=1, creationflags=flags,
-            )
-            ready = proc.stdout.readline().strip() if proc.stdout else ""
-            if ready != "READY":
-                proc.terminate()
-                self.log("Windows System.Speech did not initialize. Check that Windows speech components are available.", "error")
-                return None
-            self.log("Persistent Windows voice engine is ready.")
-            self.speech_process = proc
-            return proc
-        except Exception as exc:
-            self.log(f"Windows voice engine could not start: {exc}", "error")
-            return None
-
     def _speech_loop(self) -> None:
-        proc = self._start_speech_process()
-        if sys.platform != "win32":
-            self.log("Voice playback is supported in the Windows desktop build.", "warning")
-        while True:
+        while not self.shutdown_event.is_set():
             with self.speech_condition:
-                while not self.pending_speech or self.speech_paused:
+                while not self.shutdown_event.is_set() and (
+                    not self.pending_speech or self.speech_paused or not self.tts.ready
+                ):
                     self.speech_condition.wait(timeout=0.5)
+                if self.shutdown_event.is_set():
+                    break
                 item = self.pending_speech.popleft()
                 self.current_speech = dict(item)
             success = False
+            cancelled = False
             error = ""
             try:
-                if proc is None:
-                    proc = self._start_speech_process()
-                    self.speech_process = proc
-                if proc is None or proc.poll() is not None or proc.stdin is None or proc.stdout is None:
-                    raise RuntimeError("Windows voice process is unavailable. Run the app on Windows 10/11 and check Speech settings.")
-                sapi_rate = max(-10, min(10, round((self.speech_rate - 175) / 7.5)))
-                payload = json.dumps({"text": item["text"], "rate": sapi_rate, "volume": self.speech_volume}, ensure_ascii=False)
-                proc.stdin.write(payload + "\n")
-                proc.stdin.flush()
-                result = proc.stdout.readline().strip()
-                if result == "OK":
-                    success = True
-                elif result.startswith("ERR "):
-                    error = result[4:]
-                else:
-                    raise RuntimeError("Voice engine stopped responding.")
+                success = self.tts.speak(item["text"])
+                cancelled = not success
             except Exception as exc:
                 error = str(exc)
-                if proc is not None:
-                    try:
-                        proc.terminate()
-                    except Exception:
-                        pass
-                proc = None
-                self.speech_process = None
             completed = dict(item)
             completed["completed_at"] = now_iso()
             completed["success"] = success
+            completed["cancelled"] = cancelled
             completed["error"] = error
             with self.speech_condition:
                 self.current_speech = None
                 self.speech_history.appendleft(completed)
                 self.speech_condition.notify_all()
             if success:
-                self._update_chat_read_state(str(item.get("id", "")), "spoken", "Speech completed successfully.")
-                self.log(f"Finished speaking: {item['name']} — {item['text'][:110]}")
+                self._update_chat_read_state(str(item.get("id", "")), "spoken", "Kokoro neural speech completed successfully.")
+                self.log(f"Finished speaking with {self.tts.voice}: {item['name']} — {item['text'][:110]}")
+            elif cancelled:
+                self._update_chat_read_state(str(item.get("id", "")), "skipped", "Current speech was stopped by the streamer.")
+                self.log(f"Stopped current speech for {item.get('name', 'viewer')}.", "warning")
             else:
-                self._update_chat_read_state(str(item.get("id", "")), "failed", error or "Windows voice playback failed.")
-                self.log(f"Speech failed for {item.get('name', 'viewer')}: {error}", "error")
-                time.sleep(1.0)
-        # unreachable in normal operation; process is cleaned up at interpreter exit.
+                self._update_chat_read_state(str(item.get("id", "")), "failed", error or "Kokoro speech playback failed.")
+                self.log(f"Neural speech failed for {item.get('name', 'viewer')}: {error}", "error")
+                # Do not silently drop all following lines. Continue with the next
+                # queued message and keep the failure visible in speech history.
+                time.sleep(0.5)
 
     def test_voice(self) -> int:
+        if not self.tts.ready:
+            return 0
         tests = [
             {"id": f"test-{time.time_ns()}-1", "name": "Voice test", "text": "Voice test one. NinuGaming Live Assistant is ready.", "created_at": now_iso(), "kind": "test"},
             {"id": f"test-{time.time_ns()}-2", "name": "Voice test", "text": "Voice test two. Consecutive speech should continue working.", "created_at": now_iso(), "kind": "test"},
@@ -917,8 +870,26 @@ $synth.Dispose()
                 return 0
             self.pending_speech.extend(tests)
             self.speech_condition.notify_all()
-        self.log("Queued three consecutive voice tests.")
+        self.log("Queued three consecutive Kokoro neural voice tests.")
         return len(tests)
+
+    def preview_voice(self) -> bool:
+        if not self.tts.ready:
+            return False
+        item = {
+            "id": f"preview-{time.time_ns()}",
+            "name": "Voice preview",
+            "text": "Hello! This is the selected Kokoro voice for NinuGaming Live Assistant. How does this voice sound to you?",
+            "created_at": now_iso(),
+            "kind": "voice-preview",
+        }
+        with self.speech_condition:
+            if len(self.pending_speech) >= MAX_PENDING_SPEECH:
+                return False
+            self.pending_speech.append(item)
+            self.speech_condition.notify_all()
+        self.log(f"Queued voice preview for {self.tts.voice}.")
+        return True
 
     def state(self) -> dict[str, Any]:
         with self.lock:
@@ -948,6 +919,7 @@ $synth.Dispose()
             "speech_pending": pending, "speech_pending_count": pending_count,
             "currently_speaking": current, "speech_history": recent,
             "review_queue": self.review_queue.snapshot(), "logs": logs,
+            "tts": self.tts.settings(),
             "usage": usage, "runtime_seconds_left": seconds_left,
             "quota_units_left": self.ledger.remaining_quota(),
             "review_queue_count": len(self.review_queue.snapshot()),
@@ -972,8 +944,13 @@ def save_config(payload: dict[str, Any]) -> dict[str, Any]:
     if mode not in {"all", "review_only", "off"}:
         mode = "all"
     read_existing = bool(payload.get("read_existing", old.get("read_existing", False)))
-    atomic_write_json(CONFIG_FILE, {"api_key": key, "stream_url": url, "min_delay": delay, "read_mode": mode, "read_existing": read_existing})
-    return {"api_key_set": bool(key), "stream_url": url, "min_delay": delay, "read_mode": mode, "read_existing": read_existing}
+    tts_voice = str(payload.get("tts_voice", old.get("tts_voice", DEFAULT_VOICE)))
+    if tts_voice not in {item["id"] for item in VOICE_CATALOG}:
+        tts_voice = DEFAULT_VOICE
+    tts_speed = max(0.70, min(1.40, float(payload.get("tts_speed", old.get("tts_speed", DEFAULT_SPEED)))))
+    tts_volume = max(0, min(100, int(payload.get("tts_volume", old.get("tts_volume", DEFAULT_VOLUME)))))
+    atomic_write_json(CONFIG_FILE, {"api_key": key, "stream_url": url, "min_delay": delay, "read_mode": mode, "read_existing": read_existing, "tts_voice": tts_voice, "tts_speed": tts_speed, "tts_volume": tts_volume})
+    return {"api_key_set": bool(key), "stream_url": url, "min_delay": delay, "read_mode": mode, "read_existing": read_existing, "tts_voice": tts_voice, "tts_speed": tts_speed, "tts_volume": tts_volume}
 
 
 @app.route("/")
@@ -994,14 +971,16 @@ def health():
 @app.route("/api/config", methods=["GET"])
 def config_get():
     cfg = load_config()
-    return jsonify({"api_key_set": bool(cfg.get("api_key")), "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY), "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False)})
+    return jsonify({"api_key_set": bool(cfg.get("api_key")), "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY), "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False), "tts_voice": cfg.get("tts_voice", DEFAULT_VOICE), "tts_speed": cfg.get("tts_speed", DEFAULT_SPEED), "tts_volume": cfg.get("tts_volume", DEFAULT_VOLUME)})
 
 
 @app.route("/api/config", methods=["POST"])
 def config_post():
     payload = request.get_json(silent=True) or {}
     try:
-        return jsonify({"ok": True, **save_config(payload)})
+        saved = save_config(payload)
+        assistant.tts.configure(voice=saved["tts_voice"], speed=saved["tts_speed"], volume=saved["tts_volume"])
+        return jsonify({"ok": True, **saved})
     except (ValueError, TypeError) as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
@@ -1054,8 +1033,15 @@ def pause_listener():
 def speech_test():
     count = assistant.test_voice()
     if count == 0:
-        return jsonify({"ok": False, "error": "Speech queue is full. Clear or wait for queued speech."}), 400
+        return jsonify({"ok": False, "error": assistant.tts.error or assistant.tts.status or "The Kokoro voice model is not ready yet."}), 503
     return jsonify({"ok": True, "queued": count})
+
+
+@app.route("/api/speech/preview", methods=["POST"])
+def speech_preview():
+    if not assistant.preview_voice():
+        return jsonify({"ok": False, "error": assistant.tts.error or assistant.tts.status or "The Kokoro voice model is not ready yet."}), 503
+    return jsonify({"ok": True, "message": f"Preview queued for {assistant.tts.voice}."})
 
 
 @app.route("/api/speech/pause", methods=["POST"])
@@ -1088,8 +1074,21 @@ def speech_read_now():
 @app.route("/api/speech/settings", methods=["POST"])
 def speech_settings():
     payload = request.get_json(silent=True) or {}
-    assistant.speech_rate = max(100, min(250, int(payload.get("rate", 175))))
-    assistant.speech_volume = max(0, min(100, int(payload.get("volume", 100))))
+    cfg = load_config()
+    voice = str(payload.get("voice", cfg.get("tts_voice", DEFAULT_VOICE)))
+    speed = max(0.70, min(1.40, float(payload.get("speed", cfg.get("tts_speed", DEFAULT_SPEED)))))
+    volume = max(0, min(100, int(payload.get("volume", cfg.get("tts_volume", DEFAULT_VOLUME)))))
+    if voice not in {item["id"] for item in VOICE_CATALOG}:
+        return jsonify({"ok": False, "error": "That Kokoro voice is not available."}), 400
+    cfg.update({"tts_voice": voice, "tts_speed": speed, "tts_volume": volume})
+    atomic_write_json(CONFIG_FILE, cfg)
+    settings = assistant.tts.configure(voice=voice, speed=speed, volume=volume)
+    return jsonify({"ok": True, "tts": settings})
+
+
+@app.route("/api/speech/stop-current", methods=["POST"])
+def speech_stop_current():
+    assistant.tts.stop_current()
     return jsonify({"ok": True})
 
 
@@ -1122,11 +1121,12 @@ def diagnostics():
         "python": sys.version.split()[0], "platform": sys.platform,
         "data_directory": str(DATA_ROOT), "config_found": CONFIG_FILE.exists(),
         "api_key_saved": bool(cfg.get("api_key")), "stream_url_saved": bool(cfg.get("stream_url")),
-        "speech_backend": "Windows System.Speech via persistent PowerShell" if os.name == "nt" else "Windows speech backend unavailable on this OS",
+        "speech_backend": "Kokoro-82M neural TTS via ONNX Runtime (DirectML GPU / CPU fallback)",
         "listener_running": assistant.running, "listener_connected": assistant.connected,
         "quota_remaining_local": assistant.ledger.remaining_quota(),
         "runtime_seconds_remaining": int(assistant.ledger.remaining_runtime()),
         "last_error": assistant.last_error,
+        "tts": assistant.tts.settings(),
     }
     assistant.log("Local diagnostics report generated.")
     return jsonify({"ok": True, "diagnostics": result})
@@ -1178,6 +1178,10 @@ def main() -> None:
             server.join()
     finally:
         assistant.stop_event.set()
+        assistant.shutdown_event.set()
+        assistant.tts.close()
+        with assistant.speech_condition:
+            assistant.speech_condition.notify_all()
         server.shutdown()
 
 
@@ -1185,9 +1189,10 @@ def main() -> None:
 def _cleanup() -> None:
     try:
         assistant.stop_event.set()
-        proc = assistant.speech_process
-        if proc and proc.poll() is None:
-            proc.terminate()
+        assistant.shutdown_event.set()
+        assistant.tts.close()
+        with assistant.speech_condition:
+            assistant.speech_condition.notify_all()
     except Exception:
         pass
 
