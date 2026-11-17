@@ -1,79 +1,85 @@
-# NinuGaming Live Assistant
+# NinuGaming Live Assistant 2.1.0
 
-A Windows desktop app that merges NinuGaming's YouTube live-chat voice reader with the Genshin account-review queue. It includes a live inbox, transparent speech queue, diagnostics and an OBS browser overlay.
+A Windows desktop assistant combining YouTube livestream chat reading, a visible speech pipeline, and NinuGaming's Genshin account-review queue.
 
-## Features
+## New in 2.1.0: local neural speech
 
-- Read new public YouTube live-chat messages aloud using a persistent Windows System.Speech voice process.
-- See every message received, its reading decision, the exact next line, the current line and recently completed lines.
-- Detect Genshin account-review / queue requests and extract a possible 6–12 digit UID.
-- Keep a persistent local review queue with viewer name, UID, original comment and detection reason.
-- Handle supported Super Chats, Super Stickers, memberships, milestones and gift events.
-- Retry recoverable network and rate-limit errors, preserve YouTube page tokens and explain terminal errors.
-- Enforce a cumulative four-hour daily reading limit and a local 9,000-unit quota safety ceiling.
-- Provide a local OBS Browser Source overlay. OBS uses the app's local state and does not make YouTube API calls.
+- Replaces Windows SAPI voices with **Kokoro-82M** natural neural text-to-speech.
+- Offers 27 selectable English voices across American/British accents and female/male voices.
+- Provides a voice preview, three-line test, speed and volume controls.
+- Uses ONNX Runtime DirectML GPU acceleration where available; it automatically falls back to the INT8 CPU model if DirectML or the GPU model cannot be used.
+- Warms up the model in the background at launch and keeps one persistent model session for all messages.
+- Generates audio in chunks and buffers playback ahead to reduce gaps between generated chunks.
+- Runs locally after installation; chat messages and speech are not sent to a cloud TTS service.
 
-The Genshin intent detector is rule-based and local, not a paid AI service. Its confidence and matching reason are displayed so the streamer can correct false positives.
+The installer contains both the FP16 and INT8 Kokoro models plus the shared voice pack. Expect a larger download and an initial first-run model warm-up. The FP16 model is used on supported DirectML GPUs; the smaller INT8 model is the CPU fallback.
 
-## Windows installation
+## Download and install (recommended)
 
-1. Install 64-bit Python 3.10+ and enable **Add Python to PATH**.
-2. Download this repository (Code → Download ZIP) and extract it to a writable folder.
-3. Double-click **setup.bat** once.
-4. Double-click **run.bat**.
-5. Enter a YouTube Data API v3 key and a public livestream URL. Press **Test connection**.
-6. Press **Test voice (3 messages)**. This checks local voice output without consuming YouTube quota.
-7. Press **Start listener**, then send a fresh message in the livestream chat.
+1. Open the repository's **Releases** page or the latest successful **Build Windows desktop app** workflow artifact.
+2. Download `NinuGamingLiveAssistant-Setup.exe`.
+3. Run the installer. It installs the app, the Kokoro model files, Microsoft's Visual C++ runtime, and WebView2 runtime.
+4. Launch **NinuGaming Live Assistant** from the Start menu or desktop shortcut.
+5. On the first launch, wait for the TTS status to say `Kokoro ready`. The first load initializes the neural model; later messages reuse the loaded session.
+6. Choose a voice, press **Preview selected voice**, and adjust speed/volume before connecting your livestream.
 
-The application stores its API key and local usage/review queue under `%APPDATA%\\NinuGamingLiveAssistant`. These files are not committed to GitHub. Do not share your config file or API key.
+The installer writes model files under `%PROGRAMDATA%\\NinuGamingLiveAssistant\\models`. User settings, API key, local usage ledger, and review queue are kept under `%APPDATA%\\NinuGamingLiveAssistant`.
 
-## Dashboard guide
+## Speech controls
 
-- **Live chat received:** newest incoming messages and their read/skip/filter reasons. Use **Read this message** to enqueue an individual message manually.
-- **Currently speaking:** the line sent to Windows speech.
-- **Up next:** FIFO queue of lines waiting to be spoken. The first item is next. **Skip next** removes only the waiting item; it does not interrupt the current line.
-- **Recently read:** completed or failed speech items.
-- **Genshin review queue:** detected viewers, UID, confidence, raw message and matching reason. **Next viewer** advances the queue.
-- **Diagnostics:** poll count, retry count, estimated quota, remaining runtime and recent errors.
+- **Choose a natural voice:** 27 Kokoro English voices. The dropdown identifies accent and voice style.
+- **Preview selected voice:** speaks a fixed sample so you can compare voices.
+- **Test neural voice (3 lines):** queues three separate lines to verify consecutive speech.
+- **Speed:** 0.70× to 1.40×. Start near 1.00× for a natural pace.
+- **Volume:** adjusts generated audio level.
+- **Engine status:** shows model loading, selected ONNX provider, precision, phonemizer and model path. If it reports an error, open Diagnostics and copy the exact message.
 
-### Reading modes
+The app prefers `DmlExecutionProvider` with the FP16 model. If that cannot be created, it tries the INT8 CPU model. The dashboard displays the backend actually selected; GPU acceleration is never silently assumed.
 
-- **All readable chat messages** — speak every new text-bearing message/event.
-- **Only Genshin review requests** — show all messages but speak detected review requests.
-- **Off** — continue monitoring and classifying without adding speech.
+## YouTube and chat features
 
-By default, existing chat backlog is skipped on connect. Enable **Read recent chat already on screen at connection** to include it.
+- Read public YouTube live-chat messages aloud through the local Kokoro voice.
+- View received messages, why each message was routed/filtered, exact upcoming speech, current speech and recently spoken lines.
+- Detect Genshin account-review/queue requests and extract possible 6–12 digit UIDs.
+- Keep a persistent review queue with viewer, UID, original request, confidence and detection reason.
+- Read supported Super Chats, Super Stickers, new membership events, membership milestones and gifting events.
+- Retry recoverable network/rate-limit failures and preserve YouTube continuation tokens.
+- Use the local OBS overlay at `/obs`; OBS does not make its own YouTube API requests.
 
-## Quota and four-hour limit
+## YouTube quota and four-hour cap
 
-The app calls `videos.list` once to find the live chat ID (1 quota unit), then `liveChatMessages.list` (5 units per call). It observes YouTube's `pollingIntervalMillis` and enforces a 10-second minimum delay. At a 10-second delay, four hours is estimated at 7,201 units; a 15-second delay is estimated at 4,801 units.
+The listener uses `videos.list` once (1 unit) and `liveChatMessages.list` (5 units per request). It respects YouTube's returned polling interval and enforces a 10-second minimum delay. At the 10-second floor, the four-hour estimate is approximately 7,201 units. The app stops at a local 9,000-unit safety ceiling or four cumulative hours per Pacific quota day.
 
-The app tracks usage and runtime locally and stops at 9,000 estimated units or four cumulative hours in the Pacific quota day. The local ledger cannot see other applications or users consuming the same Google Cloud project's quota. The four-hour limit is therefore a safety cap, not a guarantee of availability. A YouTube `quotaExceeded` response stops the listener with a visible error. Recoverable `rateLimitExceeded` and network failures retry with backoff.
+This local estimate cannot measure quota used by other apps or people sharing your Google Cloud project. A real `quotaExceeded` API response therefore stops the listener with a visible error.
 
-YouTube's API requires the client to follow the returned page token and polling interval. See the official [LiveChatMessages.list documentation](https://developers.google.com/youtube/data/live/reference/rest/v3/liveChatMessages/list) and [quota costs](https://developers.google.com/youtube/v3/determine_quota_cost).
+Official references:
+- [YouTube LiveChatMessages.list](https://developers.google.com/youtube/v3/live/docs/liveChatMessages/list)
+- [YouTube Data API quota costs](https://developers.google.com/youtube/v3/determine_quota_cost)
 
-## OBS overlay
+## Run from source (developer mode)
 
-Add an OBS **Browser Source** with the local URL printed in the app console, normally `http://127.0.0.1:8765/obs`. The overlay is read-only and reflects the app state. If port 8765 is busy, the app chooses another port and prints the actual URL.
+Windows 10 1903+ or Windows 11, 64-bit Python 3.12, and an internet connection for downloading dependencies/models are recommended.
 
-## Build a standalone EXE
+1. Clone/download this repository.
+2. Run `setup.bat`. It installs Python packages, ONNX Runtime DirectML, Kokoro, and downloads/checksums all three model files.
+3. Run `run.bat`.
+4. Use `build.bat` only if Inno Setup 7 is installed; it builds the onedir app and the final Windows installer.
 
-On Windows, double-click **build.bat**. The resulting file is `dist\\NinuGamingLiveAssistant.exe`. The GitHub Actions workflow also builds a Windows EXE and uploads it as a downloadable workflow artifact after pushes to `main`.
+The normal user should use the installer, not developer mode.
+
+## Build pipeline
+
+GitHub Actions runs unit tests, installs the Windows speech runtime, downloads and verifies official model hashes, runs a headless neural streaming smoke test, packages the desktop app with PyInstaller, and creates `installer/NinuGamingLiveAssistant-Setup.exe` using Inno Setup.
 
 ## Troubleshooting
 
-- **No chat appears:** confirm that the stream is live and public live chat is enabled; send a new chat message after connection. Existing backlog is skipped by default.
-- **Messages appear but are not spoken:** inspect each row's read status/reason; choose the correct reading mode, unpause voice and check **Up next**.
-- **Voice test is silent:** check Windows Settings → System → Sound → Volume mixer and available Windows speech voices. The test does not use YouTube quota.
-- **Listener reconnects repeatedly:** open Diagnostics and inspect the latest error. Invalid API keys, disabled API access, ended streams and exhausted quota are not transient network failures.
-- **Quota exhausted:** review the shared project quota in Google Cloud Console; this app cannot measure quota spent by other clients.
+- **Model is still loading:** wait for `Kokoro ready`. Model initialization is heavier than normal speech and happens once per app start.
+- **DirectML fails:** the engine attempts the bundled INT8 CPU fallback. Check the provider shown in Diagnostics.
+- **No audio:** press Preview selected voice; check Windows Volume Mixer and the selected output device. A working model does not guarantee that the Windows audio device is available.
+- **Voice test returns an error:** copy the full TTS error shown in Engine status/Diagnostics.
+- **GPU not selected:** update the NVIDIA driver and verify Windows supports DirectX 12. The app reports CPU fallback rather than claiming GPU use.
+- **API stops:** inspect the YouTube API error, daily quota, live status and public live-chat setting.
 
-## Tests
+## Licensing
 
-```bat
-.venv\\Scripts\\python.exe -m unittest discover -s tests -v
-```
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+The Kokoro-82M model and voice files are Apache 2.0 licensed; `kokoro-onnx` is MIT licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for component notices.
