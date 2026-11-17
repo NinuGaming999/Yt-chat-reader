@@ -4,7 +4,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -59,3 +59,33 @@ jobs:
           name: NinuGamingLiveAssistant-Setup
           path: installer/NinuGamingLiveAssistant-Setup.exe
           retention-days: 30
+      - name: Publish GitHub Release with Windows installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.1.0
+          name: NinuGaming Live Assistant v2.1.0
+          body: |
+            ## NinuGaming Live Assistant v2.1.0
+
+            A combined YouTube livestream chat reader and Genshin review-queue desktop app.
+
+            ### Neural voice
+            - Local Kokoro-82M neural text-to-speech.
+            - Selectable male and female voices, voice preview, speed and volume controls.
+            - DirectML GPU acceleration on supported Windows systems, with CPU fallback.
+            - Local model files; chat text is not sent to a paid speech service.
+
+            ### Livestream and review queue
+            - Live chat inbox and visible speech queue.
+            - Current speech and recently completed speech.
+            - Genshin UID and review-request detection.
+            - OBS browser overlay, diagnostics, retry handling, four-hour daily limit and quota safety cap.
+
+            ### Installation
+            Download NinuGamingLiveAssistant-Setup.exe, run it, and follow the installer.
+            The installer includes the app, neural voice model files, and runtime prerequisites.
+          files: installer/NinuGamingLiveAssistant-Setup.exe
+          draft: false
+          prerelease: false
+          overwrite_files: true
+          make_latest: true
