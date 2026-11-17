@@ -1,4 +1,4 @@
-name: Build Windows desktop app
+name: Build Windows desktop installer
 on:
   push:
     branches: [main]
@@ -13,19 +13,49 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install dependencies
+      - name: Install desktop and neural speech dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      - name: Build standalone EXE
+          python -m pip install onnxruntime-directml==1.24.4
+          python -m pip install --no-deps kokoro-onnx==0.6.1
+      - name: Download and verify Kokoro models
+        shell: pwsh
+        run: ./download_models.ps1
+      - name: Smoke-test Kokoro neural streaming on CPU
+        run: python smoke_neural.py
+      - name: Build desktop application
         run: >-
-          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
           --name NinuGamingLiveAssistant
           --add-data "ui.html;."
           --add-data "obs.html;."
-          --collect-submodules webview app.py
+          --collect-all webview
+          --collect-all kokoro_onnx
+          --collect-all onnxruntime
+          --collect-all phonemizer
+          --collect-all espeakng_loader
+          --collect-all sounddevice
+          --copy-metadata kokoro-onnx
+          app.py
+      - name: Download Microsoft WebView2 Evergreen bootstrapper
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer_assets | Out-Null
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile 'installer_assets/vc_redist.x64.exe'
+          Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile 'installer_assets/MicrosoftEdgeWebView2Setup.exe'
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $compiler = Get-ChildItem 'C:\Program Files (x86)\Inno Setup*\ISCC.exe','C:\Program Files\Inno Setup*\ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $compiler) { throw 'Inno Setup compiler ISCC.exe was not found.' }
+          & $compiler.FullName /Qp setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path 'installer/NinuGamingLiveAssistant-Setup.exe')) { throw 'Installer output was not created.' }
       - uses: actions/upload-artifact@v4
         with:
-          name: NinuGamingLiveAssistant-windows
-          path: dist/NinuGamingLiveAssistant.exe
-          retention-days: 14
+          name: NinuGamingLiveAssistant-Setup
+          path: installer/NinuGamingLiveAssistant-Setup.exe
+          retention-days: 30
