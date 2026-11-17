@@ -1,28 +1,34 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo ==============================================
-echo   NinuGaming Live Assistant - Setup
-echo ==============================================
+echo ======================================================
+echo   NinuGaming Live Assistant - Source Developer Setup
+echo ======================================================
 where py >nul 2>nul
-if %errorlevel%==0 (set "PY=py -3") else (
+if %errorlevel%==0 (set "PY=py -3.12") else (
   where python >nul 2>nul
   if %errorlevel%==0 (set "PY=python") else (
-    echo Python 3.10 or newer was not found.
-    echo Install Python from https://www.python.org/downloads/ and enable Add Python to PATH.
+    echo Python 3.12 x64 was not found.
+    echo Install Python 3.12 from https://www.python.org/downloads/ and enable Add Python to PATH.
     pause
     exit /b 1
   )
 )
-if not exist ".venv\\Scripts\\python.exe" (
+if not exist ".venv\Scripts\python.exe" (
   echo Creating local Python environment...
   %PY% -m venv .venv
   if errorlevel 1 goto :fail
 )
-echo Installing required packages...
-.venv\\Scripts\\python.exe -m pip install --upgrade pip
+echo Installing app dependencies and DirectML runtime...
+.venv\Scripts\python.exe -m pip install --upgrade pip
 if errorlevel 1 goto :fail
-.venv\\Scripts\\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+if errorlevel 1 goto :fail
+.venv\Scripts\python.exe -m pip install onnxruntime-directml==1.24.4
+if errorlevel 1 goto :fail
+.venv\Scripts\python.exe -m pip install --no-deps kokoro-onnx==0.6.1
+if errorlevel 1 goto :fail
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0download_models.ps1"
 if errorlevel 1 goto :fail
 echo.
 echo Setup complete. Double-click run.bat to open the desktop app.
@@ -30,6 +36,6 @@ pause
 exit /b 0
 :fail
 echo.
-echo Setup failed. Check the message above.
+echo Setup failed. Check the error above.
 pause
 exit /b 1
