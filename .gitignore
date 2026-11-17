@@ -7,3 +7,6 @@ dist/
 *.spec
 *.log
 .env
+models/
+installer/
+installer_assets/
