@@ -1,8 +1,7 @@
-"""CUDA-only VibeVoice process manager.
+"""CUDA-only Kokoro-v1.0 process manager.
 
-The desktop installer stays small. A separate embedded Python runtime, the
-NVIDIA CUDA packages and the model are downloaded on first launch. There is
-intentionally no CPU TTS fallback.
+The compact ONNX model and NVIDIA ONNX Runtime are installed into a separate
+Python runtime on first launch. No CPU TTS fallback is permitted.
 """
 from __future__ import annotations
 
@@ -12,37 +11,63 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any, Callable
 
-import requests
-
 APP_NAME = "NinuGamingLiveAssistant"
-DEFAULT_VOICE = "en-Carter_man"
+DEFAULT_VOICE = "af_heart"
 DEFAULT_SPEED = 1.0
 DEFAULT_VOLUME = 100
 PYTHON_VERSION = "3.12.10"
-PYTHON_URL = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
+PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
-TORCH_VERSION = "2.7.1"
-TORCH_INDEX = "https://download.pytorch.org/whl/cu126"
-VIBEVOICE_ZIP = "https://github.com/microsoft/VibeVoice/archive/16fb2cb1217c9934a886e1948ffb06120caa2df5.zip"
-PACKAGES = [
-    "transformers==4.51.3", "accelerate>=1.0,<2", "diffusers>=0.30,<1",
-    "numpy>=1.26,<2", "scipy>=1.11", "safetensors>=0.4",
-    "huggingface_hub>=0.27,<1", "sentencepiece>=0.2", "sounddevice>=0.5",
-    "tqdm>=4.66", "ml-collections>=0.1", "packaging>=24",
-]
+ONNXRUNTIME_GPU_VERSION = "1.26.0"
+KOKORO_ONNX_VERSION = "0.6.1"
+MODEL_DIR_NAME = "kokoro-v1.0"
+RUNTIME_SIGNATURE = (
+    f"python-{PYTHON_VERSION};onnxruntime-gpu-{ONNXRUNTIME_GPU_VERSION};"
+    f"kokoro-onnx-{KOKORO_ONNX_VERSION};CUDAExecutionProvider;strict"
+)
+MODEL_URL = (
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
+    "model-files-v1.1/kokoro-v1.0.fp16.onnx"
+)
+VOICES_URL = (
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
+    "model-files-v1.1/voices-v1.0.bin"
+)
 VOICE_CATALOG = [
-    {"id":"en-Carter_man","label":"Carter · English · Male","language":"en"},
-    {"id":"en-Davis_man","label":"Davis · English · Male","language":"en"},
-    {"id":"en-Emma_woman","label":"Emma · English · Female","language":"en"},
-    {"id":"en-Frank_man","label":"Frank · English · Male","language":"en"},
-    {"id":"en-Grace_woman","label":"Grace · English · Female","language":"en"},
-    {"id":"en-Mike_man","label":"Mike · English · Male","language":"en"},
+    {"id":"af_heart","label":"Heart · American · Female","language":"en-us"},
+    {"id":"af_bella","label":"Bella · American · Female","language":"en-us"},
+    {"id":"af_nicole","label":"Nicole · American · Female","language":"en-us"},
+    {"id":"af_sarah","label":"Sarah · American · Female","language":"en-us"},
+    {"id":"af_sky","label":"Sky · American · Female","language":"en-us"},
+    {"id":"af_alloy","label":"Alloy · American · Female","language":"en-us"},
+    {"id":"af_aoede","label":"Aoede · American · Female","language":"en-us"},
+    {"id":"af_jessica","label":"Jessica · American · Female","language":"en-us"},
+    {"id":"af_kore","label":"Kore · American · Female","language":"en-us"},
+    {"id":"af_nova","label":"Nova · American · Female","language":"en-us"},
+    {"id":"af_river","label":"River · American · Female","language":"en-us"},
+    {"id":"am_michael","label":"Michael · American · Male","language":"en-us"},
+    {"id":"am_fenrir","label":"Fenrir · American · Male","language":"en-us"},
+    {"id":"am_puck","label":"Puck · American · Male","language":"en-us"},
+    {"id":"am_adam","label":"Adam · American · Male","language":"en-us"},
+    {"id":"am_echo","label":"Echo · American · Male","language":"en-us"},
+    {"id":"am_eric","label":"Eric · American · Male","language":"en-us"},
+    {"id":"am_liam","label":"Liam · American · Male","language":"en-us"},
+    {"id":"am_onyx","label":"Onyx · American · Male","language":"en-us"},
+    {"id":"bf_emma","label":"Emma · British · Female","language":"en-gb"},
+    {"id":"bf_isabella","label":"Isabella · British · Female","language":"en-gb"},
+    {"id":"bf_alice","label":"Alice · British · Female","language":"en-gb"},
+    {"id":"bf_lily","label":"Lily · British · Female","language":"en-gb"},
+    {"id":"bm_george","label":"George · British · Male","language":"en-gb"},
+    {"id":"bm_lewis","label":"Lewis · British · Male","language":"en-gb"},
+    {"id":"bm_fable","label":"Fable · British · Male","language":"en-gb"},
+    {"id":"bm_daniel","label":"Daniel · British · Male","language":"en-gb"},
 ]
-VOICE_BY_ID = {v["id"]: v for v in VOICE_CATALOG}
+VOICE_BY_ID = {voice["id"]: voice for voice in VOICE_CATALOG}
 
 
 def _data_root() -> Path:
@@ -57,25 +82,44 @@ def _nvidia_smi() -> str | None:
         Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "nvidia-smi.exe",
         Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "NVIDIA Corporation" / "NVSMI" / "nvidia-smi.exe",
     ]
-    return next((str(p) for p in paths if p.is_file()), None)
+    return next((str(path) for path in paths if path.is_file()), None)
+
+
+def _gpu_name(smi: str) -> str:
+    try:
+        result = subprocess.run(
+            [smi, "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().splitlines()[0]
+    except Exception:
+        pass
+    return "NVIDIA GPU"
 
 
 class NeuralSpeechEngine:
-    """Persistent manager for the external VibeVoice CUDA worker."""
+    """Persistent manager for the external Kokoro ONNX CUDA worker."""
 
-    def __init__(self, app_root: Path, on_status: Callable[[str,str],None] | None = None,
-                 voice: str = DEFAULT_VOICE, speed: float = DEFAULT_SPEED,
-                 volume: int = DEFAULT_VOLUME) -> None:
+    def __init__(
+        self,
+        app_root: Path,
+        on_status: Callable[[str, str], None] | None = None,
+        voice: str = DEFAULT_VOICE,
+        speed: float = DEFAULT_SPEED,
+        volume: int = DEFAULT_VOLUME,
+    ) -> None:
         self.app_root = Path(app_root)
         self.data_root = _data_root()
-        self.runtime_root = self.data_root / "runtime"
+        self.runtime_root = self.data_root / "kokoro-runtime"
         self.python_root = self.runtime_root / f"python-{PYTHON_VERSION}"
         self.python_exe = self.python_root / "python.exe"
-        self.model_dir = self.data_root / "models" / "vibevoice-realtime-0.5b"
-        self.worker_file = self.app_root / "vibevoice_worker.py"
+        self.model_dir = self.data_root / "models" / MODEL_DIR_NAME
+        self.worker_file = self.app_root / "kokoro_worker.py"
         if not self.worker_file.is_file():
             import sys
-            self.worker_file = Path(getattr(sys, "_MEIPASS", self.app_root)) / "vibevoice_worker.py"
+            self.worker_file = Path(getattr(sys, "_MEIPASS", self.app_root)) / "kokoro_worker.py"
         self.voice = voice if voice in VOICE_BY_ID else DEFAULT_VOICE
         self.speed = self._clamp_speed(speed)
         self.volume = self._clamp_volume(volume)
@@ -87,18 +131,18 @@ class NeuralSpeechEngine:
         self.ready = False
         self.status = "Checking NVIDIA GPU…"
         self.provider = "NVIDIA CUDA (required)"
-        self.model_precision = "BF16 / FP16"
-        self.phonemizer = "VibeVoice realtime streaming"
+        self.model_precision = "FP16 ONNX"
+        self.phonemizer = "Kokoro eSpeak NG · streaming ONNX"
         self.error = ""
         self.closed = threading.Event()
         self.speech_done = threading.Event()
         self.speech_success = False
         self.speech_error = ""
-        threading.Thread(target=self._bootstrap, name="vibevoice-bootstrap", daemon=True).start()
+        threading.Thread(target=self._bootstrap, name="kokoro-bootstrap", daemon=True).start()
 
     @staticmethod
     def _clamp_speed(value: float) -> float:
-        return max(1.0, min(1.40, float(value)))
+        return max(0.70, min(1.40, float(value)))
 
     @staticmethod
     def _clamp_volume(value: int) -> int:
@@ -119,21 +163,30 @@ class NeuralSpeechEngine:
         with log_path.open("a", encoding="utf-8", errors="replace") as log:
             log.write("\n>>> " + " ".join(args) + "\n")
             log.flush()
-            result = subprocess.run(args, stdout=log, stderr=subprocess.STDOUT, check=False,
-                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            result = subprocess.run(
+                args, stdout=log, stderr=subprocess.STDOUT, check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
         if result.returncode:
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            raise RuntimeError(f"{label} failed ({result.returncode}).\n" + "\n".join(lines[-18:])[-3000:])
+            raise RuntimeError(
+                f"{label} failed ({result.returncode}).\n" + "\n".join(lines[-18:])[-3000:]
+            )
 
     def _download(self, url: str, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         part = destination.with_suffix(destination.suffix + ".download")
-        with requests.get(url, stream=True, timeout=(20, 180)) as response:
-            response.raise_for_status()
-            with part.open("wb") as output:
-                for chunk in response.iter_content(1024 * 1024):
-                    if chunk:
-                        output.write(chunk)
+        request = urllib.request.Request(url, headers={"User-Agent": "NinuGamingLiveAssistant/2.3"})
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response, part.open("wb") as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+        except Exception:
+            part.unlink(missing_ok=True)
+            raise
         if not part.is_file() or part.stat().st_size < 1_000_000:
             part.unlink(missing_ok=True)
             raise RuntimeError("A required first-run download was incomplete.")
@@ -156,8 +209,8 @@ class NeuralSpeechEngine:
         if not pth_files:
             raise RuntimeError("Python runtime configuration file was not found.")
         pth = pth_files[0]
-        lines = [x.strip() for x in pth.read_text(encoding="utf-8").splitlines() if x.strip()]
-        lines = [x for x in lines if x.lower() not in {"# import site", "import site"}]
+        lines = [line.strip() for line in pth.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = [line for line in lines if line.lower() not in {"# import site", "import site"}]
         if "Lib\\site-packages" not in lines:
             lines.append("Lib\\site-packages")
         lines.append("import site")
@@ -171,69 +224,84 @@ class NeuralSpeechEngine:
         ).returncode == 0
         if pip_ok:
             return
-        self._notify("Preparing pip in the isolated CUDA runtime…")
+        self._notify("Preparing pip in the isolated Kokoro runtime…")
         get_pip = self.runtime_root / "get-pip.py"
-        response = requests.get(GET_PIP_URL, timeout=(20, 120))
-        response.raise_for_status()
-        get_pip.write_bytes(response.content)
-        self._run([str(self.python_exe), str(get_pip), "--disable-pip-version-check"],
-                  "Installing the isolated Python package manager", log_path)
+        request = urllib.request.Request(GET_PIP_URL, headers={"User-Agent": "NinuGamingLiveAssistant/2.3"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            get_pip.write_bytes(response.read())
+        self._run(
+            [str(self.python_exe), str(get_pip), "--disable-pip-version-check"],
+            "Installing the isolated Python package manager", log_path,
+        )
         get_pip.unlink(missing_ok=True)
 
-    def _install_cuda_runtime(self, log_path: Path) -> None:
-        marker = self.runtime_root / "vibevoice-runtime.version"
-        signature = f"python-{PYTHON_VERSION};torch-{TORCH_VERSION};cu126;vibevoice-16fb2cb"
+    def _install_kokoro_runtime(self, log_path: Path) -> None:
+        marker = self.runtime_root / "kokoro-runtime.version"
         try:
-            if marker.read_text(encoding="utf-8").strip() == signature:
-                self._run([str(self.python_exe), "-c",
-                           "import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))"],
-                          "Checking NVIDIA CUDA runtime", log_path)
+            if marker.read_text(encoding="utf-8").strip() == RUNTIME_SIGNATURE:
+                self._run(
+                    [str(self.python_exe), "-c",
+                     "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers(); "
+                     "ort.preload_dlls(directory=''); print(ort.__version__)"],
+                    "Checking NVIDIA ONNX Runtime", log_path,
+                )
                 return
         except (OSError, RuntimeError):
             pass
+
         self._install_python(log_path)
-        self._run([str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
-                   "--no-warn-script-location", f"torch=={TORCH_VERSION}", "--index-url", TORCH_INDEX],
-                  "Installing PyTorch with NVIDIA CUDA 12.6", log_path)
-        self._run([str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
-                   "--no-warn-script-location", *PACKAGES],
-                  "Installing VibeVoice dependencies", log_path)
-        self._run([str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
-                   "--no-warn-script-location", "--no-deps", VIBEVOICE_ZIP],
-                  "Installing pinned Microsoft VibeVoice source", log_path)
-        self._run([str(self.python_exe), "-c",
-                   "import torch; assert torch.cuda.is_available(), 'CUDA unavailable'; "
-                   "print(torch.cuda.get_device_name(0)); print(torch.cuda.is_bf16_supported())"],
-                  "Verifying GPU access before model download", log_path)
+        self._run(
+            [str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
+             "--no-warn-script-location", f"onnxruntime-gpu[cuda,cudnn]=={ONNXRUNTIME_GPU_VERSION}"],
+            "Installing ONNX Runtime with NVIDIA CUDA and cuDNN", log_path,
+        )
+        self._run(
+            [str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
+             "--no-warn-script-location", "numpy>=2.0.2", "espeakng-loader>=0.2.4",
+             "phonemizer>=3.4.0", "sounddevice>=0.5"],
+            "Installing Kokoro speech dependencies", log_path,
+        )
+        self._run(
+            [str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
+             "--no-warn-script-location", "--no-deps", f"kokoro-onnx=={KOKORO_ONNX_VERSION}"],
+            "Installing Kokoro ONNX runtime", log_path,
+        )
+        self._run(
+            [str(self.python_exe), "-c",
+             "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers(), "
+             "'CUDAExecutionProvider is unavailable'; ort.preload_dlls(directory=''); print(ort.__version__)"],
+            "Verifying NVIDIA CUDA execution provider", log_path,
+        )
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(signature, encoding="utf-8")
+        marker.write_text(RUNTIME_SIGNATURE, encoding="utf-8")
 
     def _bootstrap(self) -> None:
-        log_path = self.runtime_root / "vibevoice-install.log"
+        log_path = self.runtime_root / "kokoro-install.log"
         try:
             smi = _nvidia_smi()
             if not smi:
                 raise RuntimeError("NVIDIA driver not detected. Install/update the NVIDIA driver; CPU TTS is disabled.")
-            check = subprocess.run([smi, "-L"], capture_output=True, text=True, timeout=15,
-                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            check = subprocess.run(
+                [smi, "-L"], capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
             if check.returncode or "GPU" not in (check.stdout or ""):
-                raise RuntimeError("nvidia-smi did not find an NVIDIA GPU. VibeVoice CUDA was not started.")
+                raise RuntimeError("nvidia-smi did not find an NVIDIA GPU. Kokoro CUDA was not started.")
             self.data_root.mkdir(parents=True, exist_ok=True)
-            self._install_cuda_runtime(log_path)
+            self._install_kokoro_runtime(log_path)
             if self.closed.is_set():
                 return
             if not self.worker_file.is_file():
-                raise RuntimeError(f"Speech worker file is missing: {self.worker_file}")
-            self._notify("Starting the NVIDIA CUDA speech worker…")
+                raise RuntimeError(f"Kokoro worker file is missing: {self.worker_file}")
+            self._notify("Starting the Kokoro NVIDIA CUDA worker…")
             env = os.environ.copy()
             env.update({
-                "VIBEVOICE_MODEL_DIR": str(self.model_dir),
-                "VIBEVOICE_DATA_DIR": str(self.data_root),
-                "HF_HOME": str(self.data_root / "huggingface"),
-                "HF_HUB_DISABLE_TELEMETRY": "1",
-                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                "KOKORO_MODEL_DIR": str(self.model_dir),
+                "ONNX_PROVIDER": "CUDAExecutionProvider",
             })
-            worker_log = (self.runtime_root / "vibevoice-worker.log").open("a", encoding="utf-8", errors="replace")
+            worker_log = (self.runtime_root / "kokoro-worker.log").open(
+                "a", encoding="utf-8", errors="replace"
+            )
             self.process = subprocess.Popen(
                 [str(self.python_exe), "-u", str(self.worker_file)],
                 cwd=str(self.worker_file.parent), env=env,
@@ -241,13 +309,13 @@ class NeuralSpeechEngine:
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            self.reader = threading.Thread(target=self._read_worker, name="vibevoice-events", daemon=True)
+            self.reader = threading.Thread(target=self._read_worker, name="kokoro-events", daemon=True)
             self.reader.start()
             self._send({"cmd":"configure","voice":self.voice,"speed":self.speed,"volume":self.volume})
         except Exception as exc:
             self.error = str(exc)
             self.ready = False
-            self._notify(f"VibeVoice CUDA startup failed: {exc}", "error")
+            self._notify(f"Kokoro CUDA startup failed: {exc}", "error")
 
     def _send(self, payload: dict[str, Any]) -> bool:
         proc = self.process
@@ -270,36 +338,43 @@ class NeuralSpeechEngine:
                 if self.closed.is_set():
                     break
                 try:
-                    msg = json.loads(line)
+                    message = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                kind = msg.get("event")
+                kind = message.get("event")
                 if kind == "status":
-                    self._notify(str(msg.get("status") or "Loading VibeVoice…"), msg.get("level", "info"))
+                    self._notify(str(message.get("status") or "Loading Kokoro…"), message.get("level", "info"))
                 elif kind == "ready":
                     self.ready = True
                     self.error = ""
-                    self.provider = str(msg.get("provider") or "NVIDIA CUDA")
-                    self.model_precision = str(msg.get("precision") or "BF16")
-                    self.phonemizer = str(msg.get("backend") or "VibeVoice realtime")
-                    self._notify(f"VibeVoice ready · {self.provider} · {self.model_precision} · {msg.get('gpu_name','NVIDIA GPU')}")
+                    self.provider = str(message.get("provider") or "NVIDIA CUDA")
+                    self.model_precision = str(message.get("precision") or "FP16 ONNX")
+                    self.phonemizer = str(message.get("backend") or "Kokoro streaming")
+                    self._notify(
+                        f"Kokoro ready · {self.provider} · {self.model_precision} · "
+                        f"{message.get('gpu_name', 'NVIDIA GPU')}"
+                    )
                 elif kind == "error":
                     self.ready = False
-                    self.error = str(msg.get("message") or "Unknown VibeVoice error")
-                    self._notify(f"VibeVoice CUDA error: {self.error}", "error")
+                    self.error = str(message.get("message") or "Unknown Kokoro error")
+                    self._notify(f"Kokoro CUDA error: {self.error}", "error")
                 elif kind == "speech_done":
-                    self.speech_success = bool(msg.get("success"))
-                    self.speech_error = str(msg.get("error") or "")
+                    self.speech_success = bool(message.get("success"))
+                    self.speech_error = str(message.get("error") or "")
                     self.speech_done.set()
         finally:
             if not self.closed.is_set() and proc.poll() is not None:
                 self.ready = False
                 if not self.error:
-                    self.error = f"VibeVoice worker exited with code {proc.returncode}."
+                    self.error = f"Kokoro worker exited with code {proc.returncode}."
                 self._notify(self.error, "error")
 
-    def configure(self, voice: str | None = None, speed: float | None = None,
-                  volume: int | None = None) -> dict:
+    def configure(
+        self,
+        voice: str | None = None,
+        speed: float | None = None,
+        volume: int | None = None,
+    ) -> dict:
         with self.lock:
             if voice is not None:
                 self.voice = voice if voice in VOICE_BY_ID else DEFAULT_VOICE
@@ -325,22 +400,22 @@ class NeuralSpeechEngine:
 
     def speak(self, text: str) -> bool:
         if not self.ready:
-            raise RuntimeError(self.error or self.status or "VibeVoice CUDA is not ready.")
+            raise RuntimeError(self.error or self.status or "Kokoro CUDA is not ready.")
         with self.speak_lock:
             self.speech_done.clear()
             self.speech_success = False
             self.speech_error = ""
             if not self._send({"cmd":"speak","text":str(text)[:1000]}):
-                raise RuntimeError("Could not send speech to the VibeVoice worker.")
-            deadline = time.monotonic() + 300
+                raise RuntimeError("Could not send speech to the Kokoro worker.")
+            deadline = time.monotonic() + 180
             while not self.speech_done.wait(0.25):
                 if self.closed.is_set():
                     return False
                 if self.process is None or self.process.poll() is not None:
-                    raise RuntimeError("VibeVoice worker stopped during speech.")
+                    raise RuntimeError("Kokoro worker stopped during speech.")
                 if time.monotonic() >= deadline:
                     self.stop_current()
-                    raise TimeoutError("VibeVoice did not finish within five minutes.")
+                    raise TimeoutError("Kokoro did not finish within three minutes.")
             if self.speech_error:
                 raise RuntimeError(self.speech_error)
             return self.speech_success
