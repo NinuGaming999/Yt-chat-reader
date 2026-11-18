@@ -9,6 +9,13 @@ class GpuOnlySpeechTests(unittest.TestCase):
         source = (ROOT / "vibevoice_worker.py").read_text(encoding="utf-8")
         compile(source, "vibevoice_worker.py", "exec")
 
+    def test_original_scheduler_five_step_baseline_and_cuda_attention_fallback(self):
+        source = (ROOT / "vibevoice_worker.py").read_text(encoding="utf-8")
+        self.assertIn("self.model.set_ddpm_inference_steps(num_steps=5)", source)
+        self.assertNotIn("noise_scheduler.from_config", source)
+        self.assertIn('return ("flash_attention_2", "sdpa") if flash_available else ("sdpa",)', source)
+        self.assertIn("max(5, min(8,", source)
+
     def test_worker_requires_cuda_without_cpu_fallback(self):
         source = (ROOT / "vibevoice_worker.py").read_text(encoding="utf-8")
         self.assertIn("torch.cuda.is_available()", source)
