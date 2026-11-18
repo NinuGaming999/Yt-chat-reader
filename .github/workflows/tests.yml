@@ -12,6 +12,6 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install Flask requests tzdata
       - name: Compile app and GPU worker
-        run: python -m py_compile app.py speech_engine.py vibevoice_worker.py
+        run: python -m py_compile app.py speech_engine.py kokoro_worker.py
       - name: Run test suite
         run: python -m unittest discover -s tests -v
