@@ -1,5 +1,5 @@
 #define MyAppName "NinuGaming Live Assistant"
-#define MyAppVersion "2.3.0-rc.1"
+#define MyAppVersion "2.3.0-rc.2"
 #define MyAppPublisher "NinuGaming"
 #define MyAppExeName "NinuGamingLiveAssistant.exe"
 
