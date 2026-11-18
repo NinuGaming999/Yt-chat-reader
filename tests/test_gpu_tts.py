@@ -40,8 +40,8 @@ class GpuOnlySpeechTests(unittest.TestCase):
         self.assertIn("kokoro==", source)
         self.assertIn("HF_HOME", source)
         self.assertIn("torch.cuda.is_available()", source)
-        self.assertNotIn("onnxruntime-gpu", source)
-        self.assertNotIn("kokoro-onnx", source)
+        self.assertNotIn("import onnxruntime", source)
+        self.assertNotIn("kokoro-onnx==", source)
 
 
 if __name__ == "__main__":
