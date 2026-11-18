@@ -1,54 +1,53 @@
-# NinuGaming Live Assistant 2.2.0 RC3
+# NinuGaming Live Assistant 2.3.0 RC1
 
 A Windows desktop app combining YouTube livestream chat reading, a visible speech pipeline, and NinuGaming's Genshin account-review queue.
 
-## New in 2.2.0 RC3: VibeVoice CUDA streaming speech
+## New in 2.3.0: Kokoro-v1.0 NVIDIA CUDA speech
 
-- Replaces Kokoro/DirectML with **Microsoft VibeVoice Realtime 0.5B**.
-- Uses **NVIDIA CUDA through PyTorch**. There is deliberately **no CPU TTS fallback**.
-- Streams generated audio chunks while speech generation continues.
-- Offers six English presets: Carter, Davis, Emma, Frank, Grace, and Mike.
-- Keeps PyTorch, CUDA packages, and the model outside the installer. The first launch downloads the separate runtime and approximately 2 GB model; later launches reuse the local files.
-- Restores the original VibeVoice noise scheduler and uses Microsoft's five-step baseline, with the quality control scaling up to eight steps.
-- Selects FlashAttention 2 when available and working; otherwise PyTorch SDPA uses the fastest fused CUDA kernels supported by the installed GPU and PyTorch build.
-- Combines adjacent very short chat messages into a contextual spoken update, and removes emoji/symbol noise and unsupported scripts from TTS input without altering the visible chat.
-- Uses a solid red app icon consistently in the Windows executable, installer, and app UI.
+- Uses **Kokoro-82M v1.0** through **kokoro-onnx 0.6.1**.
+- Uses the official **FP16 ONNX model** with NVIDIA **ONNX Runtime CUDAExecutionProvider**.
+- CPU execution-provider fallback is explicitly disabled. If CUDA cannot run the model, the dashboard shows an error rather than silently switching to CPU.
+- Streams sentence/clause audio chunks while the next chunk is generated.
+- Offers 26 selected American and British English voices from the Kokoro v1.0 voice pack.
+- Uses the compact FP16 model (about 156 MB) and voice pack (about 27 MB), downloaded and SHA-256 verified on first launch.
+- Retains short-chat batching and filters emoji/symbol noise and unsupported scripts only in TTS input; the original chat remains visible in the inbox.
 
-### Compatibility and limitations
+### Runtime and compatibility
 
-- Requires 64-bit Windows 10/11, a supported NVIDIA GPU, a current NVIDIA driver, an internet connection for first-time setup, and several GB of free disk space.
-- The engine uses BF16 when supported and FP16 otherwise, always on CUDA.
-- If CUDA is unavailable or model loading fails, the dashboard shows the error. It never silently falls back to CPU.
-- The TTS model occupies GPU memory while the app is open and can compete with a game for GPU resources. Close other GPU-heavy apps if loading fails or audio falls behind.
-- This realtime model supports one speaker at a time and is primarily intended for English.
-- Microsoft describes first-audio latency around 200–300 ms as hardware-dependent. This is not a guarantee for every RTX 3060 configuration.
+- Requires 64-bit Windows 10/11, an NVIDIA CUDA-capable GPU, a compatible NVIDIA driver, an internet connection for first-time setup, and several hundred MB of free disk space.
+- The separate Python 3.12.10 runtime installs ONNX Runtime GPU 1.26.0 with its CUDA/cuDNN dependencies and kokoro-onnx 0.6.1 under `%PROGRAMDATA%\NinuGamingLiveAssistant\kokoro-runtime`.
+- The model and voice pack are stored under `%PROGRAMDATA%\NinuGamingLiveAssistant\models\kokoro-v1.0`.
+- ONNX Runtime 1.26.0 uses CUDA 12.8 and cuDNN 9.x. Keep the NVIDIA driver up to date. See the official [ONNX Runtime CUDA compatibility table](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html).
+- Kokoro is much smaller than the previous VibeVoice 0.5B/PyTorch runtime, but speech synthesis still uses GPU resources and can compete with a running game.
+- The selected voice and speed apply to the next utterance. The speed control changes speaking rate, not model quality.
 
-**Research-use warning:** the model card says VibeVoice is intended for research and development and is not recommended for untested real-world/commercial use. Generated audio includes an audible AI-generated-speech disclosure and an imperceptible provenance watermark. Review the current model card before using it on a public stream.
+**Model licensing:** Kokoro-82M is Apache-2.0 licensed. The kokoro-onnx runtime is MIT licensed. See the upstream project and model card for the exact terms.
 
 ## Install
 
-1. Download `NinuGamingLiveAssistant-Setup.exe` from Releases or the Windows workflow artifact.
-2. Run the installer. The desktop app is installed without bundling PyTorch, CUDA libraries, or model weights.
-3. Start the app. On first launch it checks for the NVIDIA driver, installs an isolated Python/PyTorch CUDA runtime under `%PROGRAMDATA%\NinuGamingLiveAssistant\runtime`, and downloads the model under `%PROGRAMDATA%\NinuGamingLiveAssistant\models`.
-4. Wait until Engine Status says `VibeVoice ready · NVIDIA CUDA`.
-5. Choose a voice, preview it, and adjust GPU compute/quality before connecting the stream.
+1. Download `NinuGamingLiveAssistant-Setup.exe` from Releases.
+2. Run the installer.
+3. Start the app. On first launch it checks for the NVIDIA driver, installs the isolated ONNX Runtime CUDA speech environment, and downloads the FP16 model and voice pack.
+4. Wait until Engine Status says `Kokoro ready · NVIDIA CUDA`.
+5. Choose a voice, preview it, and adjust the speaking speed before connecting the stream.
 
-The separated first-run downloads keep the setup file much smaller than bundling both the CUDA runtime and multi-gigabyte speech model.
+The lightweight installer does not bundle CUDA libraries or model weights. The separate runtime and the verified model files are downloaded on first launch.
 
 ## Speech controls
 
-- **Voice:** six English presets.
-- **Preview selected voice:** queues a short sample through the same live speech path.
+- **Voice:** 26 selected American and British English presets.
+- **Preview selected voice:** queues a sample through the same streaming playback path used by live chat.
 - **Test neural voice (3 lines):** queues three consecutive test utterances.
-- **GPU compute / voice quality:** the baseline is five diffusion steps; higher values use up to eight steps and more GPU compute.
+- **Voice speed:** adjusts Kokoro's speaking rate.
 - **Volume:** post-generation playback level.
-- **Engine status:** displays the CUDA device, precision, model directory, loading stage, and failure details.
-- **Diagnostics:** shows the actual provider. Speech is not ready unless it reports NVIDIA CUDA.
+- **Engine status:** displays the NVIDIA CUDA provider, FP16 ONNX model, voice, and any startup/runtime errors.
+- **Diagnostics:** shows the selected speech backend. Speech is not ready unless CUDA initialization succeeds.
 
 ## YouTube and chat features
 
 - Read public YouTube live-chat messages aloud.
 - View received messages, routing/filter reasons, upcoming speech, current speech, and recently spoken lines.
+- Combine adjacent very short chat messages into a contextual spoken update.
 - Detect Genshin account-review requests and extract possible 6–12 digit UIDs.
 - Keep a persistent review queue with viewer, UID, original request, confidence, and detection reason.
 - Read supported Super Chats, Super Stickers, new membership events, membership milestones, and gifting events.
@@ -68,29 +67,30 @@ Windows 10/11 64-bit and Python 3.12 are recommended.
 1. Clone/download this repository.
 2. Run `setup.bat` to install desktop dependencies in a local virtual environment.
 3. Run `run.bat`.
-4. On first launch, the app bootstraps the isolated CUDA speech runtime and downloads VibeVoice. This does not modify the source virtual environment.
+4. On first launch, the app bootstraps the isolated Kokoro ONNX CUDA runtime and downloads the verified model files. This does not modify the source virtual environment.
 
-The speech runtime is pinned to PyTorch 2.7.1 CUDA 12.6, Transformers 4.51.3, and Microsoft VibeVoice source commit `16fb2cb1217c9934a886e1948ffb06120caa2df5`.
+The speech runtime pins ONNX Runtime GPU 1.26.0, kokoro-onnx 0.6.1, and the Kokoro-v1.0 FP16 ONNX model/voice pack hashes embedded in `kokoro_worker.py`.
 
 ## Build and test
 
 - `.github/workflows/tests.yml` runs unit tests and syntax checks without requiring a GPU.
 - `.github/workflows/windows-build.yml` builds the lightweight Windows desktop installer. The CUDA runtime and model are downloaded only after installation.
-- GitHub-hosted CI has no RTX 3060 attached, so it cannot verify CUDA inference or local playback on your PC. That final hardware test remains necessary; the app will show explicit CUDA errors rather than silently use CPU.
+- GitHub-hosted CI has no RTX 3060 attached, so it cannot verify actual CUDA inference or local audio playback. That final hardware test remains necessary.
 
 ## Troubleshooting
 
 - **NVIDIA GPU not detected:** install/update the NVIDIA driver and confirm `nvidia-smi -L` lists the GPU.
-- **CUDA not available:** inspect `%PROGRAMDATA%\NinuGamingLiveAssistant\runtime\vibevoice-install.log`.
-- **Model downloading:** first-run download is approximately 2 GB. Keep the app open and internet connected.
-- **Out of GPU memory:** close GPU-heavy applications or lower the GPU compute/quality setting. The game and TTS share the RTX 3060.
-- **Voice playback error:** inspect Engine Status and `vibevoice-worker.log` in the runtime folder.
+- **CUDA provider unavailable:** inspect `%PROGRAMDATA%\NinuGamingLiveAssistant\kokoro-runtime\kokoro-install.log`.
+- **Model downloading:** first-run downloads are about 190 MB total. Keep the app open and internet connected.
+- **CUDA/cuDNN initialization failed:** update the NVIDIA driver; check that the installed driver supports the CUDA runtime used by ONNX Runtime 1.26.0.
+- **Voice playback error:** inspect Engine Status and `kokoro-worker.log` in the Kokoro runtime folder.
 - **No audio:** check the Windows output device and Volume Mixer.
 
 ## Official references
 
-- [Microsoft VibeVoice repository](https://github.com/microsoft/VibeVoice)
-- [VibeVoice Realtime 0.5B model card](https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B)
-- [PyTorch CUDA installation guide](https://pytorch.org/get-started/locally/)
+- [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-onnx)
+- [Kokoro-82M model card](https://huggingface.co/hexgrad/Kokoro-82M)
+- [Kokoro model and voice releases](https://github.com/thewh1teagle/kokoro-onnx/releases)
+- [ONNX Runtime CUDA Execution Provider](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html)
 - [YouTube LiveChatMessages.list](https://developers.google.com/youtube/v3/live/docs/liveChatMessages/list)
 - [YouTube Data API quota costs](https://developers.google.com/youtube/v3/determine_quota_cost)
