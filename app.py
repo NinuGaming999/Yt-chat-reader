@@ -1075,7 +1075,7 @@ def speech_read_now():
 def speech_settings():
     payload = request.get_json(silent=True) or {}
     cfg = load_config()
-    voice = str(payload.get("voice", cfg.get("tts_voice", DEFAULT_VOICE)))
+    voice = str(payload.get("voice", (cfg.get("tts_voice") if cfg.get("tts_voice") in {item["id"] for item in VOICE_CATALOG} else DEFAULT_VOICE)))
     speed = max(0.70, min(1.40, float(payload.get("speed", cfg.get("tts_speed", DEFAULT_SPEED)))))
     volume = max(0, min(100, int(payload.get("volume", cfg.get("tts_volume", DEFAULT_VOLUME)))))
     if voice not in {item["id"] for item in VOICE_CATALOG}:
@@ -1121,7 +1121,7 @@ def diagnostics():
         "python": sys.version.split()[0], "platform": sys.platform,
         "data_directory": str(DATA_ROOT), "config_found": CONFIG_FILE.exists(),
         "api_key_saved": bool(cfg.get("api_key")), "stream_url_saved": bool(cfg.get("stream_url")),
-        "speech_backend": "VibeVoice-82M neural TTS via ONNX Runtime (DirectML GPU / CPU fallback)",
+        "speech_backend": "Microsoft VibeVoice Realtime 0.5B via PyTorch NVIDIA CUDA (CPU fallback disabled)",
         "listener_running": assistant.running, "listener_connected": assistant.connected,
         "quota_remaining_local": assistant.ledger.remaining_quota(),
         "runtime_seconds_remaining": int(assistant.ledger.remaining_runtime()),
