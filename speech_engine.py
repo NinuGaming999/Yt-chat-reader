@@ -140,18 +140,18 @@ class NeuralSpeechEngine:
         part.replace(destination)
 
     def _install_python(self, log_path: Path) -> None:
-        if self.python_exe.is_file():
-            return
-        self._notify("Downloading the lightweight Python runtime…")
-        archive_path = self.runtime_root / "python-embed.zip"
-        self._download(PYTHON_URL, archive_path)
         self.python_root.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(archive_path) as archive:
-            bad = archive.testzip()
-            if bad:
-                raise RuntimeError(f"Python runtime archive is corrupt at {bad}.")
-            archive.extractall(self.python_root)
-        archive_path.unlink(missing_ok=True)
+        if not self.python_exe.is_file():
+            self._notify("Downloading the lightweight Python runtime…")
+            archive_path = self.runtime_root / "python-embed.zip"
+            self._download(PYTHON_URL, archive_path)
+            with zipfile.ZipFile(archive_path) as archive:
+                bad = archive.testzip()
+                if bad:
+                    raise RuntimeError(f"Python runtime archive is corrupt at {bad}.")
+                archive.extractall(self.python_root)
+            archive_path.unlink(missing_ok=True)
+
         pth_files = list(self.python_root.glob("*._pth"))
         if not pth_files:
             raise RuntimeError("Python runtime configuration file was not found.")
@@ -161,14 +161,23 @@ class NeuralSpeechEngine:
         if "Lib\\site-packages" not in lines:
             lines.append("Lib\\site-packages")
         lines.append("import site")
-        pth.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        pth.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
         (self.python_root / "Lib" / "site-packages").mkdir(parents=True, exist_ok=True)
+
+        pip_ok = subprocess.run(
+            [str(self.python_exe), "-m", "pip", "--version"],
+            capture_output=True, text=True, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).returncode == 0
+        if pip_ok:
+            return
+        self._notify("Preparing pip in the isolated CUDA runtime…")
         get_pip = self.runtime_root / "get-pip.py"
         response = requests.get(GET_PIP_URL, timeout=(20, 120))
         response.raise_for_status()
         get_pip.write_bytes(response.content)
         self._run([str(self.python_exe), str(get_pip), "--disable-pip-version-check"],
-                  "Preparing the isolated Python package manager", log_path)
+                  "Installing the isolated Python package manager", log_path)
         get_pip.unlink(missing_ok=True)
 
     def _install_cuda_runtime(self, log_path: Path) -> None:
