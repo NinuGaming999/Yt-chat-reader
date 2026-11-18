@@ -29,7 +29,7 @@ except ImportError:
     webview = None
 
 APP_NAME = "NinuGaming Live Assistant"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 DAILY_RUNTIME_LIMIT_SECONDS = 4 * 60 * 60
@@ -456,7 +456,7 @@ class LiveAssistant:
         )
         self.speech_thread = threading.Thread(target=self._speech_loop, name="speech-worker", daemon=True)
         self.speech_thread.start()
-        self.log("Desktop assistant initialized. Kokoro neural voice model is loading in the background.")
+        self.log("Desktop assistant initialized. VibeVoice neural voice model is loading in the background.")
 
     def _on_tts_status(self, status: str, level: str = "info") -> None:
         self.log(status, level)
@@ -845,13 +845,13 @@ class LiveAssistant:
                 self.speech_history.appendleft(completed)
                 self.speech_condition.notify_all()
             if success:
-                self._update_chat_read_state(str(item.get("id", "")), "spoken", "Kokoro neural speech completed successfully.")
+                self._update_chat_read_state(str(item.get("id", "")), "spoken", "VibeVoice neural speech completed successfully.")
                 self.log(f"Finished speaking with {self.tts.voice}: {item['name']} — {item['text'][:110]}")
             elif cancelled:
                 self._update_chat_read_state(str(item.get("id", "")), "skipped", "Current speech was stopped by the streamer.")
                 self.log(f"Stopped current speech for {item.get('name', 'viewer')}.", "warning")
             else:
-                self._update_chat_read_state(str(item.get("id", "")), "failed", error or "Kokoro speech playback failed.")
+                self._update_chat_read_state(str(item.get("id", "")), "failed", error or "VibeVoice speech playback failed.")
                 self.log(f"Neural speech failed for {item.get('name', 'viewer')}: {error}", "error")
                 # Do not silently drop all following lines. Continue with the next
                 # queued message and keep the failure visible in speech history.
@@ -870,7 +870,7 @@ class LiveAssistant:
                 return 0
             self.pending_speech.extend(tests)
             self.speech_condition.notify_all()
-        self.log("Queued three consecutive Kokoro neural voice tests.")
+        self.log("Queued three consecutive VibeVoice neural voice tests.")
         return len(tests)
 
     def preview_voice(self) -> bool:
@@ -879,7 +879,7 @@ class LiveAssistant:
         item = {
             "id": f"preview-{time.time_ns()}",
             "name": "Voice preview",
-            "text": "Hello! This is the selected Kokoro voice for NinuGaming Live Assistant. How does this voice sound to you?",
+            "text": "Hello! This is the selected VibeVoice voice for NinuGaming Live Assistant. How does this voice sound to you?",
             "created_at": now_iso(),
             "kind": "voice-preview",
         }
@@ -971,7 +971,7 @@ def health():
 @app.route("/api/config", methods=["GET"])
 def config_get():
     cfg = load_config()
-    return jsonify({"api_key_set": bool(cfg.get("api_key")), "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY), "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False), "tts_voice": cfg.get("tts_voice", DEFAULT_VOICE), "tts_speed": cfg.get("tts_speed", DEFAULT_SPEED), "tts_volume": cfg.get("tts_volume", DEFAULT_VOLUME)})
+    return jsonify({"api_key_set": bool(cfg.get("api_key")), "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY), "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False), "tts_voice": (cfg.get("tts_voice") if cfg.get("tts_voice") in {item["id"] for item in VOICE_CATALOG} else DEFAULT_VOICE), "tts_speed": cfg.get("tts_speed", DEFAULT_SPEED), "tts_volume": cfg.get("tts_volume", DEFAULT_VOLUME)})
 
 
 @app.route("/api/config", methods=["POST"])
@@ -1033,14 +1033,14 @@ def pause_listener():
 def speech_test():
     count = assistant.test_voice()
     if count == 0:
-        return jsonify({"ok": False, "error": assistant.tts.error or assistant.tts.status or "The Kokoro voice model is not ready yet."}), 503
+        return jsonify({"ok": False, "error": assistant.tts.error or assistant.tts.status or "The VibeVoice voice model is not ready yet."}), 503
     return jsonify({"ok": True, "queued": count})
 
 
 @app.route("/api/speech/preview", methods=["POST"])
 def speech_preview():
     if not assistant.preview_voice():
-        return jsonify({"ok": False, "error": assistant.tts.error or assistant.tts.status or "The Kokoro voice model is not ready yet."}), 503
+        return jsonify({"ok": False, "error": assistant.tts.error or assistant.tts.status or "The VibeVoice voice model is not ready yet."}), 503
     return jsonify({"ok": True, "message": f"Preview queued for {assistant.tts.voice}."})
 
 
@@ -1079,7 +1079,7 @@ def speech_settings():
     speed = max(0.70, min(1.40, float(payload.get("speed", cfg.get("tts_speed", DEFAULT_SPEED)))))
     volume = max(0, min(100, int(payload.get("volume", cfg.get("tts_volume", DEFAULT_VOLUME)))))
     if voice not in {item["id"] for item in VOICE_CATALOG}:
-        return jsonify({"ok": False, "error": "That Kokoro voice is not available."}), 400
+        return jsonify({"ok": False, "error": "That VibeVoice voice is not available."}), 400
     cfg.update({"tts_voice": voice, "tts_speed": speed, "tts_volume": volume})
     atomic_write_json(CONFIG_FILE, cfg)
     settings = assistant.tts.configure(voice=voice, speed=speed, volume=volume)
@@ -1121,7 +1121,7 @@ def diagnostics():
         "python": sys.version.split()[0], "platform": sys.platform,
         "data_directory": str(DATA_ROOT), "config_found": CONFIG_FILE.exists(),
         "api_key_saved": bool(cfg.get("api_key")), "stream_url_saved": bool(cfg.get("stream_url")),
-        "speech_backend": "Kokoro-82M neural TTS via ONNX Runtime (DirectML GPU / CPU fallback)",
+        "speech_backend": "VibeVoice-82M neural TTS via ONNX Runtime (DirectML GPU / CPU fallback)",
         "listener_running": assistant.running, "listener_connected": assistant.connected,
         "quota_remaining_local": assistant.ledger.remaining_quota(),
         "runtime_seconds_remaining": int(assistant.ledger.remaining_runtime()),
