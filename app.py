@@ -30,7 +30,7 @@ except ImportError:
     webview = None
 
 APP_NAME = "NinuGaming Live Assistant"
-APP_VERSION = "2.3.0-rc.1"
+APP_VERSION = "2.3.0-rc.2"
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 DAILY_RUNTIME_LIMIT_SECONDS = 4 * 60 * 60
@@ -1227,7 +1227,7 @@ def diagnostics():
         "python": sys.version.split()[0], "platform": sys.platform,
         "data_directory": str(DATA_ROOT), "config_found": CONFIG_FILE.exists(),
         "api_key_saved": bool(cfg.get("api_key")), "stream_url_saved": bool(cfg.get("stream_url")),
-        "speech_backend": "Kokoro-v1.0 FP16 ONNX via NVIDIA ONNX Runtime CUDA (CPU fallback disabled)",
+        "speech_backend": "Kokoro-v1.0 native PyTorch CUDA (CPU model inference disabled)",
         "listener_running": assistant.running, "listener_connected": assistant.connected,
         "quota_remaining_local": assistant.ledger.remaining_quota(),
         "runtime_seconds_remaining": int(assistant.ledger.remaining_runtime()),
