@@ -23,11 +23,11 @@ DEFAULT_VOLUME = 100
 PYTHON_VERSION = "3.12.10"
 PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
-TORCH_VERSION = "2.11.0"
+TORCH_VERSION = "2.11.0+cu128"
 KOKORO_VERSION = "0.9.4"
 MODEL_DIR_NAME = "kokoro-v1.0-pytorch"
 RUNTIME_SIGNATURE = (
-    f"python-{PYTHON_VERSION};torch-{TORCH_VERSION}-cu128;"
+    f"python-{PYTHON_VERSION};torch-{TORCH_VERSION};"
     f"kokoro-{KOKORO_VERSION};PyTorch-CUDA;strict"
 )
 VOICE_CATALOG = [
@@ -251,13 +251,13 @@ class NeuralSpeechEngine:
         )
         self._run(
             [str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
-             "--no-warn-script-location", "--index-url", "https://download.pytorch.org/whl/cu128",
+             "--no-warn-script-location", "--no-cache-dir", "--index-url", "https://download.pytorch.org/whl/cu128",
              "--extra-index-url", "https://pypi.org/simple", f"torch=={TORCH_VERSION}"],
             "Installing PyTorch with NVIDIA CUDA 12.8", log_path,
         )
         self._run(
             [str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
-             "--no-warn-script-location", f"kokoro=={KOKORO_VERSION}", "sounddevice>=0.5",
+             "--no-warn-script-location", "--no-cache-dir", f"kokoro=={KOKORO_VERSION}", "sounddevice>=0.5",
              "espeakng-loader>=0.2.4"],
             "Installing native Kokoro and audio dependencies", log_path,
         )
