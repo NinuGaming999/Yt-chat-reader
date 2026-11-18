@@ -2,7 +2,7 @@
 
 A Windows desktop app combining YouTube livestream chat reading, a visible speech pipeline, and NinuGaming's Genshin account-review queue.
 
-## New in 2.2.0: VibeVoice CUDA streaming speech
+## New in 2.2.0 RC3: VibeVoice CUDA streaming speech
 
 - Replaces Kokoro/DirectML with **Microsoft VibeVoice Realtime 0.5B**.
 - Uses **NVIDIA CUDA through PyTorch**. There is deliberately **no CPU TTS fallback**.
