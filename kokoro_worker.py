@@ -207,7 +207,7 @@ class Runtime:
             except (TypeError, ValueError):
                 pass
 
-    def speak(self, text: str) -> int:
+    def speak(self, text: str) -> tuple[int, bool]:
         with self.lock:
             voice = self.voice
             speed = self.speed
@@ -216,7 +216,8 @@ class Runtime:
         with self.lock:
             self.active_stop = stop_event
         try:
-            return self._speak_stream(text, voice, speed, volume, stop_event)
+            sample_count = self._speak_stream(text, voice, speed, volume, stop_event)
+            return sample_count, stop_event.is_set()
         finally:
             with self.lock:
                 if self.active_stop is stop_event:
@@ -390,8 +391,10 @@ def main():
             def read_message() -> None:
                 emit("status", status="Speaking with Kokoro NVIDIA CUDA…")
                 try:
-                    sample_count = runtime.speak(text)
-                    if sample_count <= 0:
+                    sample_count, cancelled = runtime.speak(text)
+                    if cancelled:
+                        emit("speech_done", success=False, error="")
+                    elif sample_count <= 0:
                         emit("speech_done", success=False, error="Kokoro produced no audio.")
                     else:
                         emit("speech_done", success=True, error="")
