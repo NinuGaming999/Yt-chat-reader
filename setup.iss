@@ -33,7 +33,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Dirs]
 Name: "{commonappdata}\NinuGamingLiveAssistant"; Permissions: users-modify
+Name: "{commonappdata}\NinuGamingLiveAssistant"; Permissions: users-modify
 Name: "{commonappdata}\NinuGamingLiveAssistant\models"; Permissions: users-modify
+Name: "{commonappdata}\NinuGamingLiveAssistant\runtime"; Permissions: users-modify
 Name: "{commonappdata}\NinuGamingLiveAssistant\runtime"; Permissions: users-modify
 
 [Files]
