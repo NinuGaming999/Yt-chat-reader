@@ -54,7 +54,7 @@ jobs:
           path: installer/NinuGamingLiveAssistant-Setup.exe
           retention-days: 30
       - name: Publish VibeVoice CUDA release candidate
-        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vibevoice-cuda'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vibevoice-cuda' && startsWith(github.event.head_commit.message, 'Publish release')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.2.0-rc.1
