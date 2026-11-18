@@ -26,6 +26,8 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir --windowed
           --name NinuGamingLiveAssistant
+          --icon "app.ico"
+          --add-data "app.ico;."
           --add-data "ui.html;."
           --add-data "obs.html;."
           --add-data "vibevoice_worker.py;."
@@ -57,17 +59,20 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vibevoice-cuda' && startsWith(github.event.head_commit.message, 'Publish release')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.2.0-rc.1
+          tag_name: v2.2.0-rc.3
           target_commitish: feature/vibevoice-cuda
-          name: NinuGaming Live Assistant v2.2.0-rc.1
+          name: NinuGaming Live Assistant v2.2.0-rc.3
           body: |
-            ## NinuGaming Live Assistant v2.2.0 Release Candidate 1
+            ## NinuGaming Live Assistant v2.2.0 Release Candidate 3
 
             This pre-release replaces Kokoro/DirectML with Microsoft VibeVoice Realtime 0.5B using NVIDIA CUDA only.
 
             ### Included
             - Windows x64 desktop installer.
             - Six selectable VibeVoice English speaker presets.
+            - Original VibeVoice noise scheduler, at least five diffusion steps, and automatic FlashAttention 2 / CUDA SDPA selection.
+            - Short-chat batching and TTS cleanup for emoji/symbol noise and unsupported scripts.
+            - Full red app icon embedded in the executable, installer, and UI.
             - Separate first-run PyTorch CUDA runtime and model download.
             - No CPU speech fallback; CUDA failures are displayed in the dashboard.
 
