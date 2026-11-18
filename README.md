@@ -1,4 +1,4 @@
-# NinuGaming Live Assistant 2.2.0
+# NinuGaming Live Assistant 2.2.0 RC3
 
 A Windows desktop app combining YouTube livestream chat reading, a visible speech pipeline, and NinuGaming's Genshin account-review queue.
 
@@ -9,7 +9,10 @@ A Windows desktop app combining YouTube livestream chat reading, a visible speec
 - Streams generated audio chunks while speech generation continues.
 - Offers six English presets: Carter, Davis, Emma, Frank, Grace, and Mike.
 - Keeps PyTorch, CUDA packages, and the model outside the installer. The first launch downloads the separate runtime and approximately 2 GB model; later launches reuse the local files.
-- The GPU compute/quality slider changes diffusion sampling steps. Lower values reduce GPU work; higher values may improve detail but consume more GPU compute.
+- Restores the original VibeVoice noise scheduler and uses Microsoft's five-step baseline, with the quality control scaling up to eight steps.
+- Selects FlashAttention 2 when available and working; otherwise PyTorch SDPA uses the fastest fused CUDA kernels supported by the installed GPU and PyTorch build.
+- Combines adjacent very short chat messages into a contextual spoken update, and removes emoji/symbol noise and unsupported scripts from TTS input without altering the visible chat.
+- Uses a solid red app icon consistently in the Windows executable, installer, and app UI.
 
 ### Compatibility and limitations
 
@@ -37,7 +40,7 @@ The separated first-run downloads keep the setup file much smaller than bundling
 - **Voice:** six English presets.
 - **Preview selected voice:** queues a short sample through the same live speech path.
 - **Test neural voice (3 lines):** queues three consecutive test utterances.
-- **GPU compute / voice quality:** lower values use fewer diffusion steps and reduce GPU work; higher values use more steps and may improve detail.
+- **GPU compute / voice quality:** the baseline is five diffusion steps; higher values use up to eight steps and more GPU compute.
 - **Volume:** post-generation playback level.
 - **Engine status:** displays the CUDA device, precision, model directory, loading stage, and failure details.
 - **Diagnostics:** shows the actual provider. Speech is not ready unless it reports NVIDIA CUDA.
