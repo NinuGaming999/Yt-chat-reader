@@ -30,7 +30,7 @@ except ImportError:
     webview = None
 
 APP_NAME = "NinuGaming Live Assistant"
-APP_VERSION = "2.2.0-rc.2"
+APP_VERSION = "2.2.0-rc.3"
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 DAILY_RUNTIME_LIMIT_SECONDS = 4 * 60 * 60
