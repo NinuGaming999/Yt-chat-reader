@@ -36,7 +36,7 @@
       <div class="field"><label>Voice speed</label><div class="range-row"><input type="range" id="ttsSpeed" min="0.70" max="1.40" step="0.05" value="1.00" oninput="updateVoiceSettings()"><span class="range-value" id="ttsSpeedLabel">1.00</span></div><div class="hint">Adjust the reading speed without changing the selected voice.</div></div>
       <div class="field"><label>Voice volume</label><div class="range-row"><input type="range" id="ttsVolume" min="0" max="100" value="100" oninput="updateVoiceSettings()"><span class="range-value" id="ttsVolumeLabel">100%</span></div></div>
       <div class="hint" id="ttsEngineStatus">Kokoro-v1.0 model is initializing…</div>
-      <div class="hint" id="ttsEngineDetail" style="margin-top:3px">Kokoro-v1.0 FP16 ONNX · NVIDIA CUDA only · compact first-run download</div>
+      <div class="hint" id="ttsEngineDetail" style="margin-top:3px">Kokoro-v1.0 · native PyTorch · NVIDIA CUDA inference only · first-run setup</div>
       <div class="status-line" id="statusLine">Ready. Add your API key and a live stream URL.</div>
       <div class="section" style="margin-top:18px">Daily limits</div>
       <div class="hint">Runtime left today <b id="runtimeLeft" style="color:#e9f2ff">4h 00m</b></div><div class="meter"><i id="runtimeMeter"></i></div>
