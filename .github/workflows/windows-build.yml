@@ -19,7 +19,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
       - name: Compile app and GPU worker
-        run: python -m py_compile app.py speech_engine.py vibevoice_worker.py
+        run: python -m py_compile app.py speech_engine.py kokoro_worker.py
       - name: Run test suite
         run: python -m unittest discover -s tests -v
       - name: Build lightweight desktop application
@@ -30,7 +30,7 @@ jobs:
           --add-data "app.ico;."
           --add-data "ui.html;."
           --add-data "obs.html;."
-          --add-data "vibevoice_worker.py;."
+          --add-data "kokoro_worker.py;."
           --collect-all webview
           --collect-all sounddevice
           app.py
@@ -55,35 +55,33 @@ jobs:
           name: NinuGamingLiveAssistant-Setup
           path: installer/NinuGamingLiveAssistant-Setup.exe
           retention-days: 30
-      - name: Publish VibeVoice CUDA release candidate
+      - name: Publish Kokoro CUDA release candidate
         if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vibevoice-cuda' && startsWith(github.event.head_commit.message, 'Publish release')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.2.0-rc.3
+          tag_name: v2.3.0-rc.1
           target_commitish: feature/vibevoice-cuda
-          name: NinuGaming Live Assistant v2.2.0-rc.3
+          name: NinuGaming Live Assistant v2.3.0-rc.1
           body: |
-            ## NinuGaming Live Assistant v2.2.0 Release Candidate 3
+            ## NinuGaming Live Assistant v2.3.0 Release Candidate 1
 
-            This pre-release replaces Kokoro/DirectML with Microsoft VibeVoice Realtime 0.5B using NVIDIA CUDA only.
+            This release candidate switches speech synthesis to Kokoro-82M v1.0 FP16 ONNX through NVIDIA ONNX Runtime CUDA.
 
             ### Included
-            - Windows x64 desktop installer.
-            - Six selectable VibeVoice English speaker presets.
-            - Original VibeVoice noise scheduler, at least five diffusion steps, and automatic FlashAttention 2 / CUDA SDPA selection.
+            - Windows x64 desktop installer with the full red app icon.
+            - 26 selected American and British English Kokoro voice presets.
+            - NVIDIA CUDAExecutionProvider with ONNX Runtime CPU node fallback explicitly disabled.
+            - Streaming sentence/clause audio with voice speed and volume controls.
             - Short-chat batching and TTS cleanup for emoji/symbol noise and unsupported scripts.
-            - Full red app icon embedded in the executable, installer, and UI.
-            - Separate first-run PyTorch CUDA runtime and model download.
-            - No CPU speech fallback; CUDA failures are displayed in the dashboard.
+            - SHA-256 verified Kokoro FP16 model and voice pack downloads.
+            - Separate lightweight first-run speech runtime; no PyTorch/VibeVoice installation.
 
             ### Before installing
-            - Requires a supported NVIDIA GPU and current NVIDIA driver.
-            - First run downloads the isolated speech runtime and about 2 GB of model files.
-            - The speech model uses GPU memory and may compete with games.
-            - Actual CUDA inference and playback still need testing on the installer's PC.
-            - This is a release candidate, not the stable 2.2.0 release.
-
-            Microsoft describes VibeVoice as research/development software. Generated speech includes audible AI disclosure and watermarking; review the upstream model card before public streaming.
+            - Requires a supported NVIDIA GPU and compatible current NVIDIA driver.
+            - First launch installs ONNX Runtime GPU/CUDA/cuDNN and downloads about 190 MB of model and voice data.
+            - Speech synthesis uses GPU resources and may compete with a game.
+            - Actual CUDA audio playback still needs testing on the installer's PC.
+            - This is a release candidate, not a stable release.
           files: installer/NinuGamingLiveAssistant-Setup.exe
           draft: false
           prerelease: true
