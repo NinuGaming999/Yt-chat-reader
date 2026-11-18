@@ -30,12 +30,12 @@
         <button class="btn ghost wide" onclick="testVoice()">♫ Test neural voice (3 lines)</button><button class="btn ghost wide" onclick="previewVoice()">▶ Preview selected voice</button>
         <button class="btn ghost" id="pauseChatBtn" onclick="toggleChatPause()" disabled>Ⅱ Pause chat</button><button class="btn ghost" id="pauseVoiceBtn" onclick="toggleSpeechPause()">Ⅱ Pause voice</button>
       </div>
-      <div class="section" style="margin-top:18px">Kokoro neural voice</div>
-      <div class="field"><label>Choose a natural voice</label><select id="ttsVoice" onchange="updateVoiceSettings()"><option value="af_heart">Loading voices…</option></select><div class="hint">Switch between American and British male/female voices. Changes apply to the next message.</div></div>
-      <div class="field"><label>Speaking speed</label><div class="range-row"><input type="range" id="ttsSpeed" min="0.70" max="1.40" step="0.05" value="1.00" oninput="updateVoiceSettings()"><span class="range-value" id="ttsSpeedLabel">1.00×</span></div></div>
+      <div class="section" style="margin-top:18px">VibeVoice neural voice</div>
+      <div class="field"><label>Choose a natural voice</label><select id="ttsVoice" onchange="updateVoiceSettings()"><option value="en-Carter_man">Loading voices…</option></select><div class="hint">Choose one of six built-in English voices. Changes apply to the next message.</div></div>
+      <div class="field"><label>GPU compute / voice quality</label><div class="range-row"><input type="range" id="ttsSpeed" min="0.70" max="1.40" step="0.05" value="1.00" oninput="updateVoiceSettings()"><span class="range-value" id="ttsSpeedLabel">1.00×</span></div><div class="hint">Lower values reduce GPU work for gaming; higher values use more diffusion steps and may improve speech detail.</div></div>
       <div class="field"><label>Voice volume</label><div class="range-row"><input type="range" id="ttsVolume" min="0" max="100" value="100" oninput="updateVoiceSettings()"><span class="range-value" id="ttsVolumeLabel">100%</span></div></div>
-      <div class="hint" id="ttsEngineStatus">Kokoro model is initializing…</div>
-      <div class="hint" id="ttsEngineDetail" style="margin-top:3px">Local neural TTS · no cloud voice subscription</div>
+      <div class="hint" id="ttsEngineStatus">VibeVoice model is initializing…</div>
+      <div class="hint" id="ttsEngineDetail" style="margin-top:3px">NVIDIA CUDA streaming TTS · separate runtime/model download on first launch</div>
       <div class="status-line" id="statusLine">Ready. Add your API key and a live stream URL.</div>
       <div class="section" style="margin-top:18px">Daily limits</div>
       <div class="hint">Runtime left today <b id="runtimeLeft" style="color:#e9f2ff">4h 00m</b></div><div class="meter"><i id="runtimeMeter"></i></div>
@@ -86,7 +86,7 @@
       </div>
     </main>
   </div>
-  <div class="footer"><span>NinuGaming Live Assistant v2.1.0 • Rule-based local chat analysis (no paid AI service)</span><span id="lastSync">Waiting for local app…</span></div>
+  <div class="footer"><span>NinuGaming Live Assistant v2.2.0 • Rule-based local chat analysis (no paid AI service)</span><span id="lastSync">Waiting for local app…</span></div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -99,8 +99,8 @@ function fmtTime(v){if(!v)return '—';const d=new Date(v);return isNaN(d)?Strin
 function fmtDuration(sec){sec=Math.max(0,Math.floor(sec||0));return `${Math.floor(sec/3600)}h ${String(Math.floor(sec%3600/60)).padStart(2,'0')}m`}
 function setStatus(text,isError=false){$('statusLine').textContent=text||'';$('statusLine').className='status-line'+(isError?' error':'')}
 function updateQuotaEstimate(){const d=Number($('delay').value||10);const polls=Math.ceil(14400/d);$('quotaEstimate').textContent=`Estimated four-hour usage: ${(1+polls*5).toLocaleString()} units at ${d}s (before other apps using your project).`}
-async function loadConfig(){try{lastConfig=await api('/api/config');$('streamUrl').value=lastConfig.stream_url||'';$('delay').value=String(lastConfig.min_delay||10);$('readMode').value=lastConfig.read_mode||'all';$('readExisting').checked=!!lastConfig.read_existing;$('ttsVoice').value=lastConfig.tts_voice||'af_heart';$('ttsSpeed').value=String(lastConfig.tts_speed||1);$('ttsVolume').value=String(lastConfig.tts_volume??100);if(lastConfig.api_key_set)$('apiKey').placeholder='Saved API key — leave blank to reuse';else setStatus('Add your YouTube API key and live stream URL to begin.');updateQuotaEstimate()}catch(e){setStatus(e.message,true)}}
-function configPayload(){return {api_key:$('apiKey').value.trim(),stream_url:$('streamUrl').value.trim(),min_delay:Number($('delay').value),read_mode:$('readMode').value,read_existing:$('readExisting').checked,tts_voice:$('ttsVoice').value||'af_heart',tts_speed:Number($('ttsSpeed').value||1),tts_volume:Number($('ttsVolume').value||100)}}
+async function loadConfig(){try{lastConfig=await api('/api/config');$('streamUrl').value=lastConfig.stream_url||'';$('delay').value=String(lastConfig.min_delay||10);$('readMode').value=lastConfig.read_mode||'all';$('readExisting').checked=!!lastConfig.read_existing;$('ttsVoice').value=lastConfig.tts_voice||'en-Carter_man';$('ttsSpeed').value=String(lastConfig.tts_speed||1);$('ttsVolume').value=String(lastConfig.tts_volume??100);if(lastConfig.api_key_set)$('apiKey').placeholder='Saved API key — leave blank to reuse';else setStatus('Add your YouTube API key and live stream URL to begin.');updateQuotaEstimate()}catch(e){setStatus(e.message,true)}}
+function configPayload(){return {api_key:$('apiKey').value.trim(),stream_url:$('streamUrl').value.trim(),min_delay:Number($('delay').value),read_mode:$('readMode').value,read_existing:$('readExisting').checked,tts_voice:$('ttsVoice').value||'en-Carter_man',tts_speed:Number($('ttsSpeed').value||1),tts_volume:Number($('ttsVolume').value||100)}}
 async function saveSettings(silent=false){const data=await api('/api/config',{method:'POST',body:JSON.stringify(configPayload())});lastConfig=data;if(!silent)toast('Settings saved locally');return data}
 async function startListener(){try{setStatus('Saving settings and connecting to YouTube…');await saveSettings(true);const d=await api('/api/start',{method:'POST',body:JSON.stringify(configPayload())});toast(d.message||'Listener starting');await refresh()}catch(e){setStatus(e.message,true);toast(e.message)}}
 async function stopListener(){try{await api('/api/stop',{method:'POST'});toast('Listener stopped');await refresh()}catch(e){toast(e.message)}}
@@ -109,7 +109,7 @@ async function toggleChatPause(){const paused=!(currentState&&currentState.pause
 async function toggleSpeechPause(){const paused=!(currentState&&currentState.speech_paused);try{await api('/api/speech/pause',{method:'POST',body:JSON.stringify({paused})});toast(paused?'Voice paused after current line':'Voice resumed');await refresh()}catch(e){toast(e.message)}}
 async function testVoice(){try{const d=await api('/api/speech/test',{method:'POST'});toast(`${d.queued} natural voice test lines queued`)}catch(e){toast(e.message)}}
 async function previewVoice(){try{await saveTTSSettings();const d=await api('/api/speech/preview',{method:'POST'});toast(d.message||'Voice preview queued')}catch(e){toast(e.message)}}
-async function saveTTSSettings(){const voice=$('ttsVoice').value||'af_heart',speed=Number($('ttsSpeed').value),volume=Number($('ttsVolume').value);return await api('/api/speech/settings',{method:'POST',body:JSON.stringify({voice,speed,volume})})}
+async function saveTTSSettings(){const voice=$('ttsVoice').value||'en-Carter_man',speed=Number($('ttsSpeed').value),volume=Number($('ttsVolume').value);return await api('/api/speech/settings',{method:'POST',body:JSON.stringify({voice,speed,volume})})}
 async function updateVoiceSettings(){const speed=Number($('ttsSpeed').value),volume=Number($('ttsVolume').value);$('ttsSpeedLabel').textContent=speed.toFixed(2)+'×';$('ttsVolumeLabel').textContent=volume+'%';clearTimeout(settingsTimer);settingsTimer=setTimeout(()=>saveTTSSettings().catch(e=>toast(e.message)),250)}
 async function skipNext(){try{const d=await api('/api/speech/skip-next',{method:'POST'});toast(d.ok?'Skipped the next queued message':'No message is waiting')}catch(e){toast(e.message)}}
 async function clearSpeech(){try{const d=await api('/api/speech/clear',{method:'POST'});toast(`Cleared ${d.cleared} queued messages`)}catch(e){toast(e.message)}}
