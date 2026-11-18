@@ -48,7 +48,7 @@ class NeuralVoiceConfigurationTests(unittest.TestCase):
     def test_default_voice_exists_in_catalog(self):
         ids = {voice["id"] for voice in VOICE_CATALOG}
         self.assertIn(DEFAULT_VOICE, ids)
-        self.assertGreaterEqual(len(ids), 6)
+        self.assertEqual(len(ids), 27)
 
     def test_catalog_contains_multiple_accents_and_genders(self):
         ids = {voice["id"] for voice in VOICE_CATALOG}
