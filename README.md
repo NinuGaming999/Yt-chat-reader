@@ -8,7 +8,7 @@ A Windows desktop app combining YouTube livestream chat reading, a visible speec
 - Uses the official **FP16 ONNX model** with NVIDIA **ONNX Runtime CUDAExecutionProvider**.
 - CPU execution-provider fallback is explicitly disabled. If CUDA cannot run the model, the dashboard shows an error rather than silently switching to CPU.
 - Streams sentence/clause audio chunks while the next chunk is generated.
-- Offers 26 selected American and British English voices from the Kokoro v1.0 voice pack.
+- Offers 27 selected American and British English voices from the Kokoro v1.0 voice pack.
 - Uses the compact FP16 model (about 156 MB) and voice pack (about 27 MB), downloaded and SHA-256 verified on first launch.
 - Retains short-chat batching and filters emoji/symbol noise and unsupported scripts only in TTS input; the original chat remains visible in the inbox.
 
