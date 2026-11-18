@@ -32,7 +32,6 @@ jobs:
           --add-data "obs.html;."
           --add-data "kokoro_worker.py;."
           --collect-all webview
-          --collect-all sounddevice
           app.py
       - name: Download Microsoft WebView2 and Visual C++ bootstrapper
         shell: pwsh
@@ -69,7 +68,7 @@ jobs:
 
             ### Included
             - Windows x64 desktop installer with the full red app icon.
-            - 26 selected American and British English Kokoro voice presets.
+            - 27 selected American and British English Kokoro voice presets.
             - NVIDIA CUDAExecutionProvider with ONNX Runtime CPU node fallback explicitly disabled.
             - Streaming sentence/clause audio with voice speed and volume controls.
             - Short-chat batching and TTS cleanup for emoji/symbol noise and unsupported scripts.
