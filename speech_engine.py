@@ -161,7 +161,7 @@ class NeuralSpeechEngine:
         if "Lib\\site-packages" not in lines:
             lines.append("Lib\\site-packages")
         lines.append("import site")
-        pth.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+        pth.write_text("\n".join(lines) + "\n", encoding="utf-8")
         (self.python_root / "Lib" / "site-packages").mkdir(parents=True, exist_ok=True)
 
         pip_ok = subprocess.run(
