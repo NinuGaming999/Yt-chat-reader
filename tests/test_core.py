@@ -52,14 +52,14 @@ class NeuralVoiceConfigurationTests(unittest.TestCase):
 
     def test_catalog_contains_multiple_accents_and_genders(self):
         ids = {voice["id"] for voice in VOICE_CATALOG}
-        self.assertIn("en-Carter_man", ids)
-        self.assertIn("en-Emma_woman", ids)
-        self.assertIn("en-Grace_woman", ids)
-        self.assertIn("en-Mike_man", ids)
+        self.assertIn("af_heart", ids)
+        self.assertIn("af_bella", ids)
+        self.assertIn("am_michael", ids)
+        self.assertIn("bf_emma", ids)
 
     def test_speed_and_volume_are_clamped(self):
         self.assertEqual(NeuralSpeechEngine._clamp_speed(9), 1.4)
-        self.assertEqual(NeuralSpeechEngine._clamp_speed(0.1), 1.0)
+        self.assertEqual(NeuralSpeechEngine._clamp_speed(0.1), 0.7)
         self.assertEqual(NeuralSpeechEngine._clamp_speed(1.2), 1.2)
         self.assertEqual(NeuralSpeechEngine._clamp_volume(200), 100)
         self.assertEqual(NeuralSpeechEngine._clamp_volume(-10), 0)
