@@ -1,5 +1,5 @@
 #define MyAppName "NinuGaming Live Assistant"
-#define MyAppVersion "2.2.0"
+#define MyAppVersion "2.2.0-rc.2"
 #define MyAppPublisher "NinuGaming"
 #define MyAppExeName "NinuGamingLiveAssistant.exe"
 
@@ -20,6 +20,7 @@ OutputBaseFilename=NinuGamingLiveAssistant-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=yes
 RestartApplications=no
