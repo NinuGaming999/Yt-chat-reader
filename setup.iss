@@ -33,16 +33,13 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Dirs]
 Name: "{commonappdata}\NinuGamingLiveAssistant"; Permissions: users-modify
-Name: "{commonappdata}\NinuGamingLiveAssistant"; Permissions: users-modify
 Name: "{commonappdata}\NinuGamingLiveAssistant\models"; Permissions: users-modify
-Name: "{commonappdata}\NinuGamingLiveAssistant\runtime"; Permissions: users-modify
 Name: "{commonappdata}\NinuGamingLiveAssistant\runtime"; Permissions: users-modify
 
 [Files]
 Source: "dist\NinuGamingLiveAssistant\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "installer_assets\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "installer_assets\MicrosoftEdgeWebView2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
-Source: "vibevoice_worker.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
