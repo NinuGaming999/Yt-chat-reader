@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -31,6 +32,15 @@ MODEL_DIR = Path(os.environ.get("VIBEVOICE_MODEL_DIR", "models/vibevoice"))
 DATA_DIR = Path(os.environ.get("VIBEVOICE_DATA_DIR", "data"))
 VOICE_DIR = DATA_DIR / "voices"
 output_lock = threading.Lock()
+
+
+def attention_implementations() -> tuple[str, ...]:
+    """Prefer optional FlashAttention 2; retain CUDA SDPA when unavailable."""
+    try:
+        flash_available = importlib.util.find_spec("flash_attn") is not None
+    except (ImportError, ValueError):
+        flash_available = False
+    return ("flash_attention_2", "sdpa") if flash_available else ("sdpa",)
 
 
 def emit(event: str, **data) -> None:
@@ -107,6 +117,8 @@ class Runtime:
         self.model = None
         self.processor = None
         self.precision = "BF16"
+        self.attention_backend = "sdpa"
+        self.attention_backend_label = "PyTorch SDPA (automatic fused CUDA kernels)"
 
         if not torch.cuda.is_available():
             raise RuntimeError("PyTorch cannot access an NVIDIA CUDA GPU. CPU fallback is disabled.")
@@ -123,19 +135,39 @@ class Runtime:
         torch.set_float32_matmul_precision("high")
 
         ensure_files()
-        status(f"Loading VibeVoice on {self.gpu_name} using {self.precision}…")
+        cuda_backend = getattr(torch.backends, "cuda", None)
+        if cuda_backend is not None:
+            # Let PyTorch dispatch to its fastest supported fused CUDA SDPA kernel.
+            for toggle in ("enable_flash_sdp", "enable_mem_efficient_sdp", "enable_math_sdp"):
+                enable = getattr(cuda_backend, toggle, None)
+                if enable is not None:
+                    enable(True)
+
+        status(f"Loading VibeVoice on {self.gpu_name} using {self.precision} and the best available CUDA attention…")
         self.processor = VibeVoiceStreamingProcessor.from_pretrained(str(MODEL_DIR))
         dtype = torch.bfloat16 if self.precision == "BF16" else torch.float16
-        self.model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
-            str(MODEL_DIR), torch_dtype=dtype, device_map="cuda",
-            attn_implementation="sdpa", low_cpu_mem_usage=True,
+        self.model = None
+        for attention_backend in attention_implementations():
+            try:
+                self.model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
+                    str(MODEL_DIR), torch_dtype=dtype, device_map="cuda",
+                    attn_implementation=attention_backend, low_cpu_mem_usage=True,
+                )
+                self.attention_backend = attention_backend
+                break
+            except Exception:
+                if attention_backend != "flash_attention_2":
+                    raise
+                status("FlashAttention 2 failed to initialize; falling back to CUDA SDPA…")
+                torch.cuda.empty_cache()
+        if self.model is None:
+            raise RuntimeError("No supported CUDA attention implementation could load VibeVoice.")
+        self.attention_backend_label = (
+            "FlashAttention 2" if self.attention_backend == "flash_attention_2"
+            else "PyTorch SDPA (automatic fused Flash/efficient CUDA kernels)"
         )
         self.model.eval()
-        self.model.model.noise_scheduler = self.model.model.noise_scheduler.from_config(
-            self.model.model.noise_scheduler.config,
-            algorithm_type="sde-dpmsolver++",
-            beta_schedule="squaredcos_cap_v2",
-        )
+        # Keep the noise scheduler loaded from Microsoft's original model config.
         self.model.set_ddpm_inference_steps(num_steps=5)
         self.get_voice(self.voice)
         status("Warming up the VibeVoice CUDA stream…")
@@ -147,7 +179,7 @@ class Runtime:
         if message.get("voice") in VOICE_FILES:
             self.voice = message["voice"]
         try:
-            self.speed = max(0.70, min(1.40, float(message.get("speed", self.speed))))
+            self.speed = max(1.0, min(1.40, float(message.get("speed", self.speed))))
             self.volume = max(0, min(100, int(message.get("volume", self.volume))))
         except (TypeError, ValueError):
             pass
@@ -163,8 +195,8 @@ class Runtime:
         return self.voice_cache[voice_id]
 
     def inference_steps(self) -> int:
-        # Low setting = fewer diffusion steps and less GPU work.
-        return max(3, min(8, int(round(3 + (self.speed - 0.70) * (5 / 0.70)))))
+        # Five is Microsoft's reference inference setting; quality can scale to eight.
+        return max(5, min(8, int(round(5 + (self.speed - 1.0) * 7.5))))
 
     def generate(self, text: str, voice_id: str, stop_event: threading.Event,
                  discard: bool = False, warmup: bool = False) -> int:
@@ -179,7 +211,7 @@ class Runtime:
         for key, value in list(inputs.items()):
             if hasattr(value, "to"):
                 inputs[key] = value.to(self.device)
-        self.model.set_ddpm_inference_steps(num_steps=3 if warmup else self.inference_steps())
+        self.model.set_ddpm_inference_steps(num_steps=5 if warmup else self.inference_steps())
         streamer = self.AudioStreamer(batch_size=1, stop_signal=None, timeout=None)
         errors = []
 
@@ -284,7 +316,7 @@ def main():
         emit("error", message=f"{type(exc).__name__}: {exc}")
         return
     emit("ready", provider="NVIDIA CUDA", precision=runtime.precision,
-         gpu_name=runtime.gpu_name, backend="VibeVoice Realtime · SDPA")
+         gpu_name=runtime.gpu_name, backend=f"VibeVoice Realtime · {runtime.attention_backend_label}")
     active = None
     for line in sys.stdin:
         try:
