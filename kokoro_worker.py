@@ -154,7 +154,7 @@ class Runtime:
                 f"Available providers: {available}. CPU fallback is disabled."
             )
         try:
-            ort.preload_dlls(directory="")
+            ort.preload_dlls()
         except Exception as exc:
             raise RuntimeError(f"Could not load NVIDIA CUDA/cuDNN runtime libraries: {exc}") from exc
 
