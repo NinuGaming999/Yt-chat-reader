@@ -9,29 +9,39 @@ class GpuOnlySpeechTests(unittest.TestCase):
         source = (ROOT / "kokoro_worker.py").read_text(encoding="utf-8")
         compile(source, "kokoro_worker.py", "exec")
 
-    def test_kokoro_uses_cuda_and_disables_cpu_execution_fallback(self):
+    def test_kokoro_requires_native_torch_cuda(self):
         source = (ROOT / "kokoro_worker.py").read_text(encoding="utf-8")
-        self.assertIn("CUDAExecutionProvider", source)
-        self.assertIn("session.disable_cpu_ep_fallback", source)
+        self.assertIn("torch.version.cuda", source)
+        self.assertIn("torch.cuda.is_available()", source)
+        self.assertIn('torch.device("cuda:0")', source)
+        self.assertIn(".to(self.device).eval()", source)
+        self.assertIn("parameter.device", source)
+        self.assertIn("KModel(repo_id=MODEL_REPO)", source)
+        self.assertIn("KPipeline(lang_code=\"a\"", source)
+        self.assertIn("KPipeline(lang_code=\"b\"", source)
+        self.assertIn("CPU model inference is disabled", source)
+        self.assertNotIn("onnxruntime", source.lower())
         self.assertNotIn("CPUExecutionProvider", source)
-        self.assertIn("Kokoro.from_session", source)
-        self.assertIn("create_stream(", source)
 
-    def test_kokoro_model_and_voice_integrity_are_pinned(self):
+    def test_kokoro_uses_all_declared_voice_presets(self):
         source = (ROOT / "kokoro_worker.py").read_text(encoding="utf-8")
-        self.assertIn("kokoro-v1.0.fp16.onnx", source)
-        self.assertIn("voices-v1.0.bin", source)
-        self.assertIn("MODEL_SHA256", source)
-        self.assertIn("VOICES_SHA256", source)
+        engine = (ROOT / "speech_engine.py").read_text(encoding="utf-8")
+        self.assertIn('"af_heart": "en-us"', source)
+        self.assertIn('"bf_emma": "en-gb"', source)
+        self.assertIn('"bm_daniel": "en-gb"', source)
+        self.assertIn('"af_heart"', engine)
+        self.assertIn('"bm_daniel"', engine)
 
-    def test_engine_bootstraps_kokoro_and_nvidia_onnx_runtime(self):
+    def test_engine_bootstraps_cuda_pytorch_and_native_kokoro(self):
         source = (ROOT / "speech_engine.py").read_text(encoding="utf-8")
         compile(source, "speech_engine.py", "exec")
-        self.assertIn("onnxruntime-gpu", source)
-        self.assertIn("CUDAExecutionProvider", source)
-        self.assertIn("af_heart", source)
-        self.assertIn("bf_emma", source)
-        self.assertNotIn("torch==", source)
+        self.assertIn("torch==", source)
+        self.assertIn("download.pytorch.org/whl/cu128", source)
+        self.assertIn("kokoro==", source)
+        self.assertIn("HF_HOME", source)
+        self.assertIn("torch.cuda.is_available()", source)
+        self.assertNotIn("onnxruntime-gpu", source)
+        self.assertNotIn("kokoro-onnx", source)
 
 
 if __name__ == "__main__":
