@@ -32,7 +32,7 @@
       </div>
       <div class="section" style="margin-top:18px">VibeVoice neural voice</div>
       <div class="field"><label>Choose a natural voice</label><select id="ttsVoice" onchange="updateVoiceSettings()"><option value="en-Carter_man">Loading voices…</option></select><div class="hint">Choose one of six built-in English voices. Changes apply to the next message.</div></div>
-      <div class="field"><label>GPU compute / voice quality</label><div class="range-row"><input type="range" id="ttsSpeed" min="0.70" max="1.40" step="0.05" value="1.00" oninput="updateVoiceSettings()"><span class="range-value" id="ttsSpeedLabel">1.00×</span></div><div class="hint">Lower values reduce GPU work for gaming; higher values use more diffusion steps and may improve speech detail.</div></div>
+      <div class="field"><label>GPU compute / voice quality</label><div class="range-row"><input type="range" id="ttsSpeed" min="0.70" max="1.40" step="0.05" value="1.00" oninput="updateVoiceSettings()"><span class="range-value" id="ttsSpeedLabel">1.00</span></div><div class="hint">Lower values reduce GPU work for gaming; higher values use more diffusion steps and may improve speech detail.</div></div>
       <div class="field"><label>Voice volume</label><div class="range-row"><input type="range" id="ttsVolume" min="0" max="100" value="100" oninput="updateVoiceSettings()"><span class="range-value" id="ttsVolumeLabel">100%</span></div></div>
       <div class="hint" id="ttsEngineStatus">VibeVoice model is initializing…</div>
       <div class="hint" id="ttsEngineDetail" style="margin-top:3px">NVIDIA CUDA streaming TTS · separate runtime/model download on first launch</div>
