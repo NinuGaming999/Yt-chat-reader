@@ -1,11 +1,11 @@
 name: Build Windows desktop installer
 on:
   push:
-    branches: [main]
+    branches: [main, feature/vibevoice-cuda]
   pull_request:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -53,3 +53,34 @@ jobs:
           name: NinuGamingLiveAssistant-Setup
           path: installer/NinuGamingLiveAssistant-Setup.exe
           retention-days: 30
+      - name: Publish VibeVoice CUDA release candidate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vibevoice-cuda'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.2.0-rc.1
+          target_commitish: feature/vibevoice-cuda
+          name: NinuGaming Live Assistant v2.2.0-rc.1
+          body: |
+            ## NinuGaming Live Assistant v2.2.0 Release Candidate 1
+
+            This pre-release replaces Kokoro/DirectML with Microsoft VibeVoice Realtime 0.5B using NVIDIA CUDA only.
+
+            ### Included
+            - Windows x64 desktop installer.
+            - Six selectable VibeVoice English speaker presets.
+            - Separate first-run PyTorch CUDA runtime and model download.
+            - No CPU speech fallback; CUDA failures are displayed in the dashboard.
+
+            ### Before installing
+            - Requires a supported NVIDIA GPU and current NVIDIA driver.
+            - First run downloads the isolated speech runtime and about 2 GB of model files.
+            - The speech model uses GPU memory and may compete with games.
+            - Actual CUDA inference and playback still need testing on the installer's PC.
+            - This is a release candidate, not the stable 2.2.0 release.
+
+            Microsoft describes VibeVoice as research/development software. Generated speech includes audible AI disclosure and watermarking; review the upstream model card before public streaming.
+          files: installer/NinuGamingLiveAssistant-Setup.exe
+          draft: false
+          prerelease: true
+          overwrite_files: true
+          make_latest: false
