@@ -1,7 +1,7 @@
 """CUDA-only Kokoro-v1.0 process manager.
 
-The compact ONNX model and NVIDIA ONNX Runtime are installed into a separate
-Python runtime on first launch. No CPU TTS fallback is permitted.
+Native PyTorch CUDA and Kokoro are installed into a separate Python runtime
+on first launch. CPU model inference is never permitted.
 """
 from __future__ import annotations
 
@@ -23,20 +23,12 @@ DEFAULT_VOLUME = 100
 PYTHON_VERSION = "3.12.10"
 PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
-ONNXRUNTIME_GPU_VERSION = "1.26.0"
-KOKORO_ONNX_VERSION = "0.6.1"
-MODEL_DIR_NAME = "kokoro-v1.0"
+TORCH_VERSION = "2.11.0"
+KOKORO_VERSION = "0.9.4"
+MODEL_DIR_NAME = "kokoro-v1.0-pytorch"
 RUNTIME_SIGNATURE = (
-    f"python-{PYTHON_VERSION};onnxruntime-gpu-{ONNXRUNTIME_GPU_VERSION};"
-    f"kokoro-onnx-{KOKORO_ONNX_VERSION};CUDAExecutionProvider;strict"
-)
-MODEL_URL = (
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
-    "model-files-v1.1/kokoro-v1.0.fp16.onnx"
-)
-VOICES_URL = (
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
-    "model-files-v1.1/voices-v1.0.bin"
+    f"python-{PYTHON_VERSION};torch-{TORCH_VERSION}-cu128;"
+    f"kokoro-{KOKORO_VERSION};PyTorch-CUDA;strict"
 )
 VOICE_CATALOG = [
     {"id":"af_heart","label":"Heart · American · Female","language":"en-us"},
@@ -116,6 +108,7 @@ class NeuralSpeechEngine:
         self.python_root = self.runtime_root / f"python-{PYTHON_VERSION}"
         self.python_exe = self.python_root / "python.exe"
         self.model_dir = self.data_root / "models" / MODEL_DIR_NAME
+        self.hf_home = self.model_dir / "huggingface"
         self.worker_file = self.app_root / "kokoro_worker.py"
         if not self.worker_file.is_file():
             import sys
@@ -130,9 +123,9 @@ class NeuralSpeechEngine:
         self.reader: threading.Thread | None = None
         self.ready = False
         self.status = "Checking NVIDIA GPU…"
-        self.provider = "NVIDIA CUDA (required)"
-        self.model_precision = "FP16 ONNX"
-        self.phonemizer = "Kokoro eSpeak NG · streaming ONNX"
+        self.provider = "PyTorch CUDA (required)"
+        self.model_precision = "FP32 CUDA"
+        self.phonemizer = "Kokoro native PyTorch · CUDA inference"
         self.error = ""
         self.closed = threading.Event()
         self.speech_done = threading.Event()
@@ -241,36 +234,39 @@ class NeuralSpeechEngine:
             if marker.read_text(encoding="utf-8").strip() == RUNTIME_SIGNATURE:
                 self._run(
                     [str(self.python_exe), "-c",
-                     "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers(); "
-                     "ort.preload_dlls(); print(ort.__version__)"],
-                    "Checking NVIDIA ONNX Runtime", log_path,
+                     "import torch; assert torch.version.cuda is not None; assert torch.cuda.is_available(); "
+                     "print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0))"],
+                    "Checking PyTorch NVIDIA CUDA runtime", log_path,
                 )
                 return
         except (OSError, RuntimeError):
             pass
 
         self._install_python(log_path)
+        # Remove the failed ONNX backend so its packages cannot shadow the CUDA PyTorch stack.
         self._run(
-            [str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
-             "--no-warn-script-location", f"onnxruntime-gpu[cuda,cudnn]=={ONNXRUNTIME_GPU_VERSION}"],
-            "Installing ONNX Runtime with NVIDIA CUDA and cuDNN", log_path,
+            [str(self.python_exe), "-m", "pip", "uninstall", "-y",
+             "kokoro-onnx", "onnxruntime-gpu", "onnxruntime"],
+            "Removing the incompatible ONNX speech backend", log_path,
         )
         self._run(
             [str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
-             "--no-warn-script-location", "numpy>=2.0.2", "espeakng-loader>=0.2.4",
-             "phonemizer>=3.4.0", "sounddevice>=0.5"],
-            "Installing Kokoro speech dependencies", log_path,
+             "--no-warn-script-location", "--index-url", "https://download.pytorch.org/whl/cu128",
+             "--extra-index-url", "https://pypi.org/simple", f"torch=={TORCH_VERSION}"],
+            "Installing PyTorch with NVIDIA CUDA 12.8", log_path,
         )
         self._run(
             [str(self.python_exe), "-m", "pip", "install", "--disable-pip-version-check",
-             "--no-warn-script-location", "--no-deps", f"kokoro-onnx=={KOKORO_ONNX_VERSION}"],
-            "Installing Kokoro ONNX runtime", log_path,
+             "--no-warn-script-location", f"kokoro=={KOKORO_VERSION}", "sounddevice>=0.5",
+             "espeakng-loader>=0.2.4"],
+            "Installing native Kokoro and audio dependencies", log_path,
         )
         self._run(
             [str(self.python_exe), "-c",
-             "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers(), "
-             "'CUDAExecutionProvider is unavailable'; ort.preload_dlls(); print(ort.__version__)"],
-            "Verifying NVIDIA CUDA execution provider", log_path,
+             "import torch; assert torch.version.cuda is not None; assert torch.cuda.is_available(), "
+             "'PyTorch CUDA is unavailable'; print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0)); "
+             "from kokoro import KModel, KPipeline"],
+            "Verifying native Kokoro CUDA runtime", log_path,
         )
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(RUNTIME_SIGNATURE, encoding="utf-8")
@@ -296,8 +292,9 @@ class NeuralSpeechEngine:
             self._notify("Starting the Kokoro NVIDIA CUDA worker…")
             env = os.environ.copy()
             env.update({
-                "KOKORO_MODEL_DIR": str(self.model_dir),
-                "ONNX_PROVIDER": "CUDAExecutionProvider",
+                "HF_HOME": str(self.hf_home),
+                "HF_HUB_DISABLE_TELEMETRY": "1",
+                "TOKENIZERS_PARALLELISM": "false",
             })
             worker_log = (self.runtime_root / "kokoro-worker.log").open(
                 "a", encoding="utf-8", errors="replace"
@@ -348,7 +345,7 @@ class NeuralSpeechEngine:
                     self.ready = True
                     self.error = ""
                     self.provider = str(message.get("provider") or "NVIDIA CUDA")
-                    self.model_precision = str(message.get("precision") or "FP16 ONNX")
+                    self.model_precision = str(message.get("precision") or "FP32 CUDA")
                     self.phonemizer = str(message.get("backend") or "Kokoro streaming")
                     self._notify(
                         f"Kokoro ready · {self.provider} · {self.model_precision} · "
