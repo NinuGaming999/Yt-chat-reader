@@ -4,7 +4,7 @@ NinuGaming Live Assistant v2.3.0 uses:
 
 - **Kokoro-82M v1.0 model** — Apache License 2.0; model weights are downloaded from the official Hugging Face repository on first launch.
 - **Kokoro 0.9.4** — Apache License 2.0; native PyTorch model and language-aware inference pipeline.
-- **PyTorch 2.11.0 with CUDA 12.8** — BSD-style license; installed from the official PyTorch CUDA wheel index.
+- **PyTorch 2.11.0+cu128 with CUDA 12.8** — BSD-style license; installed from the official PyTorch CUDA wheel index.
 - **NVIDIA CUDA and cuDNN runtime components** — NVIDIA license terms apply to the bundled Python runtime dependencies.
 - **Misaki** — MIT License; English grapheme-to-phoneme processing used by Kokoro.
 - **SoundDevice** — MIT License; audio playback interface.
