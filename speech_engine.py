@@ -242,7 +242,7 @@ class NeuralSpeechEngine:
                 self._run(
                     [str(self.python_exe), "-c",
                      "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers(); "
-                     "ort.preload_dlls(directory=''); print(ort.__version__)"],
+                     "ort.preload_dlls(); print(ort.__version__)"],
                     "Checking NVIDIA ONNX Runtime", log_path,
                 )
                 return
@@ -269,7 +269,7 @@ class NeuralSpeechEngine:
         self._run(
             [str(self.python_exe), "-c",
              "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers(), "
-             "'CUDAExecutionProvider is unavailable'; ort.preload_dlls(directory=''); print(ort.__version__)"],
+             "'CUDAExecutionProvider is unavailable'; ort.preload_dlls(); print(ort.__version__)"],
             "Verifying NVIDIA CUDA execution provider", log_path,
         )
         marker.parent.mkdir(parents=True, exist_ok=True)
