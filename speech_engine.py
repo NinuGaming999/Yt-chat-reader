@@ -92,7 +92,7 @@ def _gpu_name(smi: str) -> str:
 
 
 class NeuralSpeechEngine:
-    """Persistent manager for the external Kokoro ONNX CUDA worker."""
+    """Persistent manager for the external Kokoro PyTorch CUDA-only worker."""
 
     def __init__(
         self,
