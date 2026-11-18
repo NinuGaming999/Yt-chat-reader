@@ -5,7 +5,7 @@ A Windows desktop app combining YouTube livestream chat reading, a visible speec
 ## Kokoro-v1.0 native NVIDIA CUDA speech
 
 - Uses **Kokoro-82M v1.0** through the original **Kokoro PyTorch model** (kokoro==0.9.4).
-- Runs the neural model directly through **PyTorch CUDA 12.8** (torch==2.11.0); it no longer uses the ONNX export that failed strict CUDA graph placement.
+- Runs the neural model directly through **PyTorch CUDA 12.8** (torch==2.11.0+cu128); it no longer uses the ONNX export that failed strict CUDA graph placement.
 - CUDA is mandatory. Startup fails if PyTorch CUDA is unavailable, and the app verifies all Kokoro parameters and buffers are on cuda:0 before warming up the model.
 - There is **no CPU model-inference fallback**. Text normalization/phonemization and final audio playback still use normal CPU-side desktop I/O.
 - Streams generated sentence chunks to the selected Windows audio output.
@@ -15,7 +15,7 @@ A Windows desktop app combining YouTube livestream chat reading, a visible speec
 ### Runtime, model storage, and compatibility
 
 - Requires 64-bit Windows 10/11, an NVIDIA CUDA-capable GPU, a compatible current NVIDIA driver, internet access for first-time setup, and several GB of free disk space.
-- The isolated Python 3.12.10 speech runtime installs the CUDA-enabled PyTorch 2.11.0 Windows wheel from the official PyTorch CUDA 12.8 index and Kokoro 0.9.4.
+- The isolated Python 3.12.10 speech runtime installs the CUDA-enabled PyTorch 2.11.0+cu128 Windows wheel from the official PyTorch CUDA 12.8 index and Kokoro 0.9.4.
 - Model weights and selected voice files are downloaded from Hugging Face and cached under:
   %PROGRAMDATA%\NinuGamingLiveAssistant\models\kokoro-v1.0-pytorch\huggingface\
 - Speech runtime files are under %PROGRAMDATA%\NinuGamingLiveAssistant\kokoro-runtime\.
@@ -71,7 +71,7 @@ Windows 10/11 64-bit and Python 3.12 are recommended.
 3. Run run.bat.
 4. On first launch the app bootstraps the separate CUDA PyTorch/Kokoro runtime and downloads model assets into the ProgramData cache. This does not install the speech stack into the source virtual environment.
 
-The speech runtime pins Python 3.12.10, PyTorch 2.11.0 from the CUDA 12.8 wheel index, and Kokoro 0.9.4.
+The speech runtime pins Python 3.12.10, PyTorch 2.11.0+cu128 from the CUDA 12.8 wheel index, and Kokoro 0.9.4.
 
 ## Build and validation
 
