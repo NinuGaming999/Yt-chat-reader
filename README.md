@@ -1,85 +1,96 @@
-# NinuGaming Live Assistant 2.1.0
+# NinuGaming Live Assistant 2.3.0 RC2
 
-A Windows desktop assistant combining YouTube livestream chat reading, a visible speech pipeline, and NinuGaming's Genshin account-review queue.
+A Windows desktop app combining YouTube livestream chat reading, a visible speech pipeline, and NinuGaming's Genshin account-review queue.
 
-## New in 2.1.0: local neural speech
+## Kokoro-v1.0 native NVIDIA CUDA speech
 
-- Replaces Windows SAPI voices with **Kokoro-82M** natural neural text-to-speech.
-- Offers 27 selectable English voices across American/British accents and female/male voices.
-- Provides a voice preview, three-line test, speed and volume controls.
-- Uses ONNX Runtime DirectML GPU acceleration where available; it automatically falls back to the INT8 CPU model if DirectML or the GPU model cannot be used.
-- Warms up the model in the background at launch and keeps one persistent model session for all messages.
-- Generates audio in chunks and buffers playback ahead to reduce gaps between generated chunks.
-- Runs locally after installation; chat messages and speech are not sent to a cloud TTS service.
+- Uses **Kokoro-82M v1.0** through the original **Kokoro PyTorch model** (kokoro==0.9.4).
+- Runs the neural model directly through **PyTorch CUDA 12.8** (torch==2.11.0+cu128); it no longer uses the ONNX export that failed strict CUDA graph placement.
+- CUDA is mandatory. Startup fails if PyTorch CUDA is unavailable, and the app verifies all Kokoro parameters and buffers are on cuda:0 before warming up the model.
+- There is **no CPU model-inference fallback**. Text normalization/phonemization and final audio playback still use normal CPU-side desktop I/O.
+- Streams generated sentence chunks to the selected Windows audio output.
+- Offers 27 selected American and British English voices.
+- Keeps short-chat batching, emoji/symbol cleanup for TTS input only, and the original unmodified chat text in the dashboard.
 
-The installer contains both the FP16 and INT8 Kokoro models plus the shared voice pack. Expect a larger download and an initial first-run model warm-up. The FP16 model is used on supported DirectML GPUs; the smaller INT8 model is the CPU fallback.
+### Runtime, model storage, and compatibility
 
-## Download and install (recommended)
+- Requires 64-bit Windows 10/11, an NVIDIA CUDA-capable GPU, a compatible current NVIDIA driver, internet access for first-time setup, and several GB of free disk space.
+- The isolated Python 3.12.10 speech runtime installs the CUDA-enabled PyTorch 2.11.0+cu128 Windows wheel from the official PyTorch CUDA 12.8 index and Kokoro 0.9.4.
+- Model weights and selected voice files are downloaded from Hugging Face and cached under:
+  %PROGRAMDATA%\NinuGamingLiveAssistant\models\kokoro-v1.0-pytorch\huggingface\
+- Speech runtime files are under %PROGRAMDATA%\NinuGamingLiveAssistant\kokoro-runtime\.
+- PyTorch's CUDA wheel carries the CUDA libraries it needs. A separate full CUDA Toolkit installation is not required, but a compatible NVIDIA display driver is required.
+- Kokoro is a small model, but the PyTorch CUDA runtime is substantially larger than the previous ONNX runtime. Allow several GB for first-run installation and temporary package extraction.
+- Speech generation uses GPU resources and can compete with a running game. The app does not move neural inference to CPU to avoid that load; lower the number of queued messages or pause voice while gaming if needed.
 
-1. Open the repository's **Releases** page or the latest successful **Build Windows desktop app** workflow artifact.
-2. Download `NinuGamingLiveAssistant-Setup.exe`.
-3. Run the installer. It installs the app, the Kokoro model files, Microsoft's Visual C++ runtime, and WebView2 runtime.
-4. Launch **NinuGaming Live Assistant** from the Start menu or desktop shortcut.
-5. On the first launch, wait for the TTS status to say `Kokoro ready`. The first load initializes the neural model; later messages reuse the loaded session.
-6. Choose a voice, press **Preview selected voice**, and adjust speed/volume before connecting your livestream.
+**Model licensing:** Kokoro-82M is Apache-2.0 licensed. See the model card and the upstream Kokoro project.
 
-The installer writes model files under `%PROGRAMDATA%\\NinuGamingLiveAssistant\\models`. User settings, API key, local usage ledger, and review queue are kept under `%APPDATA%\\NinuGamingLiveAssistant`.
+## Install
+
+1. Download NinuGamingLiveAssistant-Setup.exe from Releases.
+2. Run the installer.
+3. Start the app. First launch checks the NVIDIA driver, installs CUDA-enabled PyTorch and Kokoro in an isolated runtime, then downloads the model and selected voice from Hugging Face.
+4. Wait until Engine Status says Kokoro ready · PyTorch CUDA · FP32 CUDA and shows your NVIDIA GPU.
+5. Preview the selected voice before connecting the stream.
+
+The desktop installer is intentionally lightweight; the GPU runtime and model weights are downloaded on first launch. Keep the app open and internet connected during setup.
 
 ## Speech controls
 
-- **Choose a natural voice:** 27 Kokoro English voices. The dropdown identifies accent and voice style.
-- **Preview selected voice:** speaks a fixed sample so you can compare voices.
-- **Test neural voice (3 lines):** queues three separate lines to verify consecutive speech.
-- **Speed:** 0.70× to 1.40×. Start near 1.00× for a natural pace.
-- **Volume:** adjusts generated audio level.
-- **Engine status:** shows model loading, selected ONNX provider, precision, phonemizer and model path. If it reports an error, open Diagnostics and copy the exact message.
-
-The app prefers `DmlExecutionProvider` with the FP16 model. If that cannot be created, it tries the INT8 CPU model. The dashboard displays the backend actually selected; GPU acceleration is never silently assumed.
+- **Voice:** 27 selected American and British English presets.
+- **Preview selected voice:** generates a sample through the same CUDA model and audio playback path used by live chat.
+- **Test neural voice (3 lines):** queues three consecutive test utterances.
+- **Voice speed:** adjusts Kokoro's speaking rate.
+- **Volume:** playback volume after generation.
+- **Engine status:** displays PyTorch CUDA, FP32 model execution, the selected NVIDIA GPU, and any startup/runtime errors.
+- **Diagnostics:** reports the native Kokoro PyTorch CUDA backend. Speech is not ready unless CUDA initialization and GPU warm-up succeed.
 
 ## YouTube and chat features
 
-- Read public YouTube live-chat messages aloud through the local Kokoro voice.
-- View received messages, why each message was routed/filtered, exact upcoming speech, current speech and recently spoken lines.
-- Detect Genshin account-review/queue requests and extract possible 6–12 digit UIDs.
-- Keep a persistent review queue with viewer, UID, original request, confidence and detection reason.
-- Read supported Super Chats, Super Stickers, new membership events, membership milestones and gifting events.
+- Read public YouTube live-chat messages aloud.
+- View received messages, routing/filter reasons, upcoming speech, current speech, and recently spoken lines.
+- Combine adjacent very short chat messages into a contextual spoken update.
+- Detect Genshin account-review requests and extract possible 6–12 digit UIDs.
+- Keep a persistent review queue with viewer, UID, original request, confidence, and detection reason.
+- Read supported Super Chats, Super Stickers, new membership events, membership milestones, and gifting events.
 - Retry recoverable network/rate-limit failures and preserve YouTube continuation tokens.
-- Use the local OBS overlay at `/obs`; OBS does not make its own YouTube API requests.
+- Use the local OBS overlay at /obs; OBS does not make its own YouTube API requests.
 
 ## YouTube quota and four-hour cap
 
-The listener uses `videos.list` once (1 unit) and `liveChatMessages.list` (5 units per request). It respects YouTube's returned polling interval and enforces a 10-second minimum delay. At the 10-second floor, the four-hour estimate is approximately 7,201 units. The app stops at a local 9,000-unit safety ceiling or four cumulative hours per Pacific quota day.
+The listener uses videos.list once (1 unit) and liveChatMessages.list (5 units per request). It respects YouTube's returned polling interval and enforces a 10-second minimum delay. At the 10-second floor, the four-hour estimate is approximately 7,201 units. The app stops at a local 9,000-unit safety ceiling or four cumulative hours per Pacific quota day.
 
-This local estimate cannot measure quota used by other apps or people sharing your Google Cloud project. A real `quotaExceeded` API response therefore stops the listener with a visible error.
+The local estimate cannot measure quota used by other apps or people sharing the same Google Cloud project. A real quotaExceeded response stops the listener with a visible error.
 
-Official references:
-- [YouTube LiveChatMessages.list](https://developers.google.com/youtube/v3/live/docs/liveChatMessages/list)
-- [YouTube Data API quota costs](https://developers.google.com/youtube/v3/determine_quota_cost)
+## Run from source
 
-## Run from source (developer mode)
-
-Windows 10 1903+ or Windows 11, 64-bit Python 3.12, and an internet connection for downloading dependencies/models are recommended.
+Windows 10/11 64-bit and Python 3.12 are recommended.
 
 1. Clone/download this repository.
-2. Run `setup.bat`. It installs Python packages, ONNX Runtime DirectML, Kokoro, and downloads/checksums all three model files.
-3. Run `run.bat`.
-4. Use `build.bat` only if Inno Setup 7 is installed; it builds the onedir app and the final Windows installer.
+2. Run setup.bat to install desktop dependencies in a local virtual environment.
+3. Run run.bat.
+4. On first launch the app bootstraps the separate CUDA PyTorch/Kokoro runtime and downloads model assets into the ProgramData cache. This does not install the speech stack into the source virtual environment.
 
-The normal user should use the installer, not developer mode.
+The speech runtime pins Python 3.12.10, PyTorch 2.11.0+cu128 from the CUDA 12.8 wheel index, and Kokoro 0.9.4.
 
-## Build pipeline
+## Build and validation
 
-GitHub Actions runs unit tests, installs the Windows speech runtime, downloads and verifies official model hashes, runs a headless neural streaming smoke test, packages the desktop app with PyInstaller, and creates `installer/NinuGamingLiveAssistant-Setup.exe` using Inno Setup.
+- GitHub Actions checks Python syntax, unit tests, and Windows installer packaging.
+- Standard GitHub-hosted CI does not have an RTX 3060 attached, so it cannot prove CUDA inference or local audio playback. The final hardware test must be performed on an NVIDIA PC.
+- The worker itself performs hard runtime checks for CUDA availability, device placement of all model parameters/buffers, and successful warm-up inference before declaring the engine ready.
 
 ## Troubleshooting
 
-- **Model is still loading:** wait for `Kokoro ready`. Model initialization is heavier than normal speech and happens once per app start.
-- **DirectML fails:** the engine attempts the bundled INT8 CPU fallback. Check the provider shown in Diagnostics.
-- **No audio:** press Preview selected voice; check Windows Volume Mixer and the selected output device. A working model does not guarantee that the Windows audio device is available.
-- **Voice test returns an error:** copy the full TTS error shown in Engine status/Diagnostics.
-- **GPU not selected:** update the NVIDIA driver and verify Windows supports DirectX 12. The app reports CPU fallback rather than claiming GPU use.
-- **API stops:** inspect the YouTube API error, daily quota, live status and public live-chat setting.
+- **NVIDIA GPU not detected:** install/update the NVIDIA driver and confirm nvidia-smi -L lists the GPU.
+- **PyTorch CUDA unavailable:** check %PROGRAMDATA%\NinuGamingLiveAssistant\kokoro-runtime\kokoro-install.log; verify the installed runtime reports a CUDA build and a visible GPU.
+- **Model downloading:** keep an internet connection. The model cache is under %PROGRAMDATA%\NinuGamingLiveAssistant\models\kokoro-v1.0-pytorch\huggingface\.
+- **CUDA initialization failed:** update the NVIDIA driver and restart Windows before retrying.
+- **Voice playback error:** inspect Engine Status and kokoro-worker.log in the Kokoro runtime folder.
+- **No audio:** check the Windows output device and Volume Mixer.
 
-## Licensing
+## Official references
 
-The Kokoro-82M model and voice files are Apache 2.0 licensed; `kokoro-onnx` is MIT licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for component notices.
+- [Kokoro model and inference library](https://github.com/hexgrad/kokoro)
+- [Kokoro-82M model card](https://huggingface.co/hexgrad/Kokoro-82M)
+- [Kokoro PyPI package](https://pypi.org/project/kokoro/0.9.4/)
+- [PyTorch CUDA installation instructions](https://pytorch.org/get-started/locally/)

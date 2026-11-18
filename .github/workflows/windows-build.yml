@@ -1,7 +1,9 @@
 name: Build Windows desktop installer
+# RC2 uses the native Kokoro PyTorch CUDA worker; no CPU model inference fallback.
 on:
   push:
-    branches: [main]
+    branches: [main, feature/vibevoice-cuda]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: write
@@ -13,32 +15,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install desktop and neural speech dependencies
+      - name: Install desktop dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install onnxruntime-directml==1.24.4
-          python -m pip install --no-deps kokoro-onnx==0.6.1
-      - name: Download and verify Kokoro models
-        shell: pwsh
-        run: ./download_models.ps1
-      - name: Smoke-test Kokoro neural streaming on CPU
-        run: python smoke_neural.py
-      - name: Build desktop application
+      - name: Compile app and GPU worker
+        run: python -m py_compile app.py speech_engine.py kokoro_worker.py
+      - name: Run test suite
+        run: python -m unittest discover -s tests -v
+      - name: Build lightweight desktop application
         run: >-
           python -m PyInstaller --noconfirm --clean --onedir --windowed
           --name NinuGamingLiveAssistant
+          --icon "app.ico"
+          --add-data "app.ico;."
           --add-data "ui.html;."
           --add-data "obs.html;."
+          --add-data "kokoro_worker.py;."
           --collect-all webview
-          --collect-all kokoro_onnx
-          --collect-all onnxruntime
-          --collect-all phonemizer
-          --collect-all espeakng_loader
-          --collect-all sounddevice
-          --copy-metadata kokoro-onnx
           app.py
-      - name: Download Microsoft WebView2 Evergreen bootstrapper
+      - name: Download Microsoft WebView2 and Visual C++ bootstrapper
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path installer_assets | Out-Null
@@ -59,33 +55,40 @@ jobs:
           name: NinuGamingLiveAssistant-Setup
           path: installer/NinuGamingLiveAssistant-Setup.exe
           retention-days: 30
-      - name: Publish GitHub Release with Windows installer
+      - name: Publish Kokoro PyTorch CUDA release candidate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vibevoice-cuda' && startsWith(github.event.head_commit.message, 'Publish release')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.0
-          name: NinuGaming Live Assistant v2.1.0
+          tag_name: v2.3.0-rc.2
+          target_commitish: feature/vibevoice-cuda
+          name: NinuGaming Live Assistant v2.3.0-rc.2
           body: |
-            ## NinuGaming Live Assistant v2.1.0
+            ## NinuGaming Live Assistant v2.3.0 Release Candidate 2
 
-            A combined YouTube livestream chat reader and Genshin review-queue desktop app.
+            This release candidate replaces the failing strict ONNX CUDA graph session with the native Kokoro-v1.0 PyTorch model on NVIDIA CUDA.
 
-            ### Neural voice
-            - Local Kokoro-82M neural text-to-speech.
-            - Selectable male and female voices, voice preview, speed and volume controls.
-            - DirectML GPU acceleration on supported Windows systems, with CPU fallback.
-            - Local model files; chat text is not sent to a paid speech service.
+            ### GPU-only model inference
+            - Installs PyTorch 2.11.0 from the official CUDA 12.8 Windows wheel index.
+            - Runs the original Kokoro-82M v1.0 model with its parameters and buffers on cuda:0.
+            - Refuses to start when a CUDA-enabled PyTorch runtime or NVIDIA GPU is unavailable.
+            - No CPU model-inference fallback is implemented.
+            - Text normalization, phonemization, and final audio playback remain CPU-side desktop I/O.
 
-            ### Livestream and review queue
-            - Live chat inbox and visible speech queue.
-            - Current speech and recently completed speech.
-            - Genshin UID and review-request detection.
-            - OBS browser overlay, diagnostics, retry handling, four-hour daily limit and quota safety cap.
+            ### Included
+            - Lightweight Windows x64 desktop installer with the full red app icon.
+            - 27 selected American and British English Kokoro voices.
+            - Streaming sentence audio, speed/volume controls, and GPU warm-up validation.
+            - Short-chat batching and TTS cleanup while retaining original messages in the UI.
+            - Existing YouTube chat inbox, Genshin UID detection/review queue, and OBS overlay.
 
-            ### Installation
-            Download NinuGamingLiveAssistant-Setup.exe, run it, and follow the installer.
-            The installer includes the app, neural voice model files, and runtime prerequisites.
+            ### Before installing
+            - Requires a supported NVIDIA GPU, current compatible NVIDIA driver, internet access, and several GB of free disk space.
+            - First launch installs PyTorch CUDA and Kokoro in a separate runtime, then downloads model weights and selected voices from Hugging Face.
+            - Speech synthesis uses GPU resources and may compete with a running game.
+            - CI can validate packaging and code tests but cannot prove local RTX 3060 audio playback.
+            - This is a release candidate, not a stable release.
           files: installer/NinuGamingLiveAssistant-Setup.exe
           draft: false
-          prerelease: false
+          prerelease: true
           overwrite_files: true
-          make_latest: true
+          make_latest: false

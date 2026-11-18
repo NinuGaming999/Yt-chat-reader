@@ -19,16 +19,10 @@ if not exist ".venv\Scripts\python.exe" (
   %PY% -m venv .venv
   if errorlevel 1 goto :fail
 )
-echo Installing app dependencies and DirectML runtime...
+echo Installing desktop dependencies. CUDA speech installs on first launch...
 .venv\Scripts\python.exe -m pip install --upgrade pip
 if errorlevel 1 goto :fail
 .venv\Scripts\python.exe -m pip install -r requirements.txt
-if errorlevel 1 goto :fail
-.venv\Scripts\python.exe -m pip install onnxruntime-directml==1.24.4
-if errorlevel 1 goto :fail
-.venv\Scripts\python.exe -m pip install --no-deps kokoro-onnx==0.6.1
-if errorlevel 1 goto :fail
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0download_models.ps1"
 if errorlevel 1 goto :fail
 echo.
 echo Setup complete. Double-click run.bat to open the desktop app.

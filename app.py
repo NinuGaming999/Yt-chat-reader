@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import webbrowser
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ except ImportError:
     webview = None
 
 APP_NAME = "NinuGaming Live Assistant"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.3.0-rc.2"
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 DAILY_RUNTIME_LIMIT_SECONDS = 4 * 60 * 60
@@ -219,15 +220,78 @@ def make_chat_record(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def speech_text_for(record: dict[str, Any]) -> str | None:
-    text = " ".join(str(record.get("text") or "").split())
-    if not text or text == "[Non-text chat event]":
-        return None
-    if len(text) > 420:
-        text = text[:417] + "..."
-    name = " ".join(str(record.get("name") or "Viewer").split())[:60]
-    return f"{name}: {text}"
+TTS_ALLOWED_PUNCTUATION = set(".,!?;:'\"()-[]/$%#@+")
 
+
+def clean_tts_text(value: Any) -> str:
+    """Remove emoji/symbol noise and keep text the English-focused model can read."""
+    normalized = unicodedata.normalize("NFKC", str(value or ""))
+    cleaned: list[str] = []
+    for char in normalized:
+        if char.isspace():
+            cleaned.append(" ")
+        elif char.isascii():
+            cleaned.append(char if char.isalnum() or char in TTS_ALLOWED_PUNCTUATION else " ")
+        elif unicodedata.category(char).startswith("L"):
+            # Transliterate common accented Latin letters; drop unsupported scripts.
+            decomposed = unicodedata.normalize("NFKD", char)
+            ascii_letters = "".join(part for part in decomposed if part.isascii() and part.isalnum())
+            cleaned.append(ascii_letters or " ")
+        else:
+            # Emoji, controls, zero-width characters and unusual symbols are boundaries.
+            cleaned.append(" ")
+
+    text = "".join(cleaned)
+    text = re.sub(r"\s+([,.;!?])", r"\1", text)
+    text = re.sub(r"([,!?;])\1+", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text).strip(" -_/")
+    return text if re.search(r"[A-Za-z0-9]", text) else ""
+
+
+def speech_parts_for(record: dict[str, Any]) -> tuple[str, str] | None:
+    raw_text = str(record.get("text") or "").strip()
+    if not raw_text or raw_text == "[Non-text chat event]":
+        return None
+    body = clean_tts_text(raw_text)
+    if not body:
+        return None
+    if len(body) > 420:
+        body = body[:417].rstrip() + "..."
+    name = clean_tts_text(record.get("name") or "Viewer")[:60] or "Viewer"
+    return name, body
+
+
+def speech_text_for(record: dict[str, Any]) -> str | None:
+    parts = speech_parts_for(record)
+    if not parts:
+        return None
+    name, body = parts
+    return f"{name}: {body}"
+
+
+def compose_short_chat_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build one contextual speech line from one or more tiny chat messages."""
+    if not items:
+        raise ValueError("A short-chat batch cannot be empty.")
+    first = items[0]
+    source_ids = [str(item.get("id") or "") for item in items if item.get("id")]
+    if len(items) == 1:
+        spoken_text = f"A viewer named {first['name']} says: {first['body']}."
+        display_name = first["name"]
+    else:
+        segments = [f"{item['name']} says: {item['body']}" for item in items]
+        spoken_text = "Quick chat update. " + ". ".join(segments) + "."
+        display_name = f"{len(items)} quick chat messages"
+    return {
+        "id": first.get("id", ""),
+        "source_ids": source_ids,
+        "name": display_name,
+        "text": spoken_text,
+        "created_at": first.get("created_at") or now_iso(),
+        "kind": "combined-short-chat" if len(items) > 1 else first.get("kind", "textMessageEvent"),
+        "review_candidate": any(bool(item.get("review_candidate")) for item in items),
+        "combined_count": len(items),
+    }
 
 def estimate_four_hour_quota(min_delay_seconds: int) -> int:
     seconds = max(10, int(min_delay_seconds))
@@ -456,7 +520,7 @@ class LiveAssistant:
         )
         self.speech_thread = threading.Thread(target=self._speech_loop, name="speech-worker", daemon=True)
         self.speech_thread.start()
-        self.log("Desktop assistant initialized. Kokoro neural voice model is loading in the background.")
+        self.log("Desktop assistant initialized. Kokoro-v1.0 neural voice model is loading in the background.")
 
     def _on_tts_status(self, status: str, level: str = "info") -> None:
         self.log(status, level)
@@ -598,6 +662,9 @@ class LiveAssistant:
                 elif self.read_mode == "review_only" and not candidate:
                     record["read_state"] = "filtered"
                     record["read_reason"] = "Speech mode is set to review requests only; this message was not classified as one."
+                elif not speech_parts_for(record):
+                    record["read_state"] = "not readable"
+                    record["read_reason"] = "No supported English letters or numbers remained after emoji and symbol cleanup."
                 else:
                     queued = self._enqueue_speech(record)
                     record["read_state"] = "queued" if queued else "queue full"
@@ -759,15 +826,19 @@ class LiveAssistant:
         return {"ok": True, "video_id": video_id, "chat_id_found": bool(chat_id), "message": "YouTube reports an active live chat."}
 
     def _enqueue_speech(self, record: dict[str, Any]) -> bool:
-        text = speech_text_for(record)
-        if not text:
+        parts = speech_parts_for(record)
+        if not parts:
             return False
+        name, body = parts
+        kind = record.get("kind", "textMessageEvent")
         with self.speech_condition:
             if len(self.pending_speech) >= MAX_PENDING_SPEECH:
                 return False
             entry = {
-                "id": record["id"], "name": record["name"], "text": text,
-                "created_at": now_iso(), "kind": record.get("kind", "textMessageEvent"),
+                "id": record["id"], "name": name, "body": body,
+                "text": f"{name}: {body}",
+                "created_at": now_iso(), "kind": kind,
+                "short_chat": kind == "textMessageEvent" and len(body.split()) <= 3,
                 "review_candidate": record.get("review_candidate", False),
             }
             self.pending_speech.append(entry)
@@ -816,6 +887,33 @@ class LiveAssistant:
         self.log(f"Cleared {count} queued speech item(s).", "warning")
         return count
 
+    def _collect_short_chat_batch(self, first: dict[str, Any]) -> dict[str, Any]:
+        if not first.get("short_chat"):
+            item = dict(first)
+            item["source_ids"] = item.get("source_ids") or ([str(item.get("id"))] if item.get("id") else [])
+            return item
+
+        items = [first]
+        deadline = time.monotonic() + 0.45
+        body_chars = len(str(first.get("body") or ""))
+        with self.speech_condition:
+            while len(items) < 4 and not self.shutdown_event.is_set():
+                if self.pending_speech:
+                    candidate = self.pending_speech[0]
+                    if not candidate.get("short_chat"):
+                        break
+                    candidate_size = len(str(candidate.get("body") or ""))
+                    if body_chars + candidate_size > 260:
+                        break
+                    items.append(self.pending_speech.popleft())
+                    body_chars += candidate_size
+                    continue
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self.speech_condition.wait(timeout=remaining)
+        return compose_short_chat_batch(items)
+
     def _speech_loop(self) -> None:
         while not self.shutdown_event.is_set():
             with self.speech_condition:
@@ -825,7 +923,11 @@ class LiveAssistant:
                     self.speech_condition.wait(timeout=0.5)
                 if self.shutdown_event.is_set():
                     break
-                item = self.pending_speech.popleft()
+                first = self.pending_speech.popleft()
+                self.current_speech = dict(first)
+
+            item = self._collect_short_chat_batch(first)
+            with self.speech_condition:
                 self.current_speech = dict(item)
             success = False
             cancelled = False
@@ -844,17 +946,21 @@ class LiveAssistant:
                 self.current_speech = None
                 self.speech_history.appendleft(completed)
                 self.speech_condition.notify_all()
+
+            source_ids = item.get("source_ids") or ([str(item.get("id"))] if item.get("id") else [])
             if success:
-                self._update_chat_read_state(str(item.get("id", "")), "spoken", "Kokoro neural speech completed successfully.")
-                self.log(f"Finished speaking with {self.tts.voice}: {item['name']} — {item['text'][:110]}")
+                for message_id in source_ids:
+                    self._update_chat_read_state(message_id, "spoken", "Kokoro neural speech completed successfully.")
+                count_note = f" ({len(source_ids)} chat messages)" if len(source_ids) > 1 else ""
+                self.log(f"Finished speaking with {self.tts.voice}: {item['name']}{count_note} — {item['text'][:110]}")
             elif cancelled:
-                self._update_chat_read_state(str(item.get("id", "")), "skipped", "Current speech was stopped by the streamer.")
+                for message_id in source_ids:
+                    self._update_chat_read_state(message_id, "skipped", "Current speech was stopped by the streamer.")
                 self.log(f"Stopped current speech for {item.get('name', 'viewer')}.", "warning")
             else:
-                self._update_chat_read_state(str(item.get("id", "")), "failed", error or "Kokoro speech playback failed.")
+                for message_id in source_ids:
+                    self._update_chat_read_state(message_id, "failed", error or "Kokoro speech playback failed.")
                 self.log(f"Neural speech failed for {item.get('name', 'viewer')}: {error}", "error")
-                # Do not silently drop all following lines. Continue with the next
-                # queued message and keep the failure visible in speech history.
                 time.sleep(0.5)
 
     def test_voice(self) -> int:
@@ -971,7 +1077,7 @@ def health():
 @app.route("/api/config", methods=["GET"])
 def config_get():
     cfg = load_config()
-    return jsonify({"api_key_set": bool(cfg.get("api_key")), "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY), "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False), "tts_voice": cfg.get("tts_voice", DEFAULT_VOICE), "tts_speed": cfg.get("tts_speed", DEFAULT_SPEED), "tts_volume": cfg.get("tts_volume", DEFAULT_VOLUME)})
+    return jsonify({"api_key_set": bool(cfg.get("api_key")), "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY), "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False), "tts_voice": (cfg.get("tts_voice") if cfg.get("tts_voice") in {item["id"] for item in VOICE_CATALOG} else DEFAULT_VOICE), "tts_speed": cfg.get("tts_speed", DEFAULT_SPEED), "tts_volume": cfg.get("tts_volume", DEFAULT_VOLUME)})
 
 
 @app.route("/api/config", methods=["POST"])
@@ -1075,7 +1181,7 @@ def speech_read_now():
 def speech_settings():
     payload = request.get_json(silent=True) or {}
     cfg = load_config()
-    voice = str(payload.get("voice", cfg.get("tts_voice", DEFAULT_VOICE)))
+    voice = str(payload.get("voice", (cfg.get("tts_voice") if cfg.get("tts_voice") in {item["id"] for item in VOICE_CATALOG} else DEFAULT_VOICE)))
     speed = max(0.70, min(1.40, float(payload.get("speed", cfg.get("tts_speed", DEFAULT_SPEED)))))
     volume = max(0, min(100, int(payload.get("volume", cfg.get("tts_volume", DEFAULT_VOLUME)))))
     if voice not in {item["id"] for item in VOICE_CATALOG}:
@@ -1121,7 +1227,7 @@ def diagnostics():
         "python": sys.version.split()[0], "platform": sys.platform,
         "data_directory": str(DATA_ROOT), "config_found": CONFIG_FILE.exists(),
         "api_key_saved": bool(cfg.get("api_key")), "stream_url_saved": bool(cfg.get("stream_url")),
-        "speech_backend": "Kokoro-82M neural TTS via ONNX Runtime (DirectML GPU / CPU fallback)",
+        "speech_backend": "Kokoro-v1.0 native PyTorch CUDA (CPU model inference disabled)",
         "listener_running": assistant.running, "listener_connected": assistant.connected,
         "quota_remaining_local": assistant.ledger.remaining_quota(),
         "runtime_seconds_remaining": int(assistant.ledger.remaining_runtime()),

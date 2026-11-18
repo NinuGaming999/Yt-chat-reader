@@ -38,6 +38,8 @@ from app import (
     extract_video_id,
     make_chat_record,
     message_text,
+    clean_tts_text,
+    compose_short_chat_batch,
     speech_text_for,
 )
 
@@ -46,18 +48,19 @@ class NeuralVoiceConfigurationTests(unittest.TestCase):
     def test_default_voice_exists_in_catalog(self):
         ids = {voice["id"] for voice in VOICE_CATALOG}
         self.assertIn(DEFAULT_VOICE, ids)
-        self.assertGreaterEqual(len(ids), 20)
+        self.assertEqual(len(ids), 27)
 
     def test_catalog_contains_multiple_accents_and_genders(self):
         ids = {voice["id"] for voice in VOICE_CATALOG}
         self.assertIn("af_heart", ids)
+        self.assertIn("af_bella", ids)
         self.assertIn("am_michael", ids)
         self.assertIn("bf_emma", ids)
-        self.assertIn("bm_george", ids)
 
     def test_speed_and_volume_are_clamped(self):
         self.assertEqual(NeuralSpeechEngine._clamp_speed(9), 1.4)
         self.assertEqual(NeuralSpeechEngine._clamp_speed(0.1), 0.7)
+        self.assertEqual(NeuralSpeechEngine._clamp_speed(1.2), 1.2)
         self.assertEqual(NeuralSpeechEngine._clamp_volume(200), 100)
         self.assertEqual(NeuralSpeechEngine._clamp_volume(-10), 0)
 
@@ -125,6 +128,36 @@ class MessageTests(unittest.TestCase):
         })
         self.assertTrue(record["review_candidate"])
         self.assertEqual(record["uid"], "123456789")
+
+
+class TtsInputPreparationTests(unittest.TestCase):
+    def test_emojis_symbols_and_accented_latin_are_cleaned(self):
+        self.assertEqual(clean_tts_text("Café player 🔥✨ — Let's go!!!"), "Cafe player Let's go!")
+
+    def test_emoji_only_and_unsupported_scripts_are_not_sent_to_tts(self):
+        self.assertEqual(clean_tts_text("🔥✨"), "")
+        self.assertEqual(clean_tts_text("東京"), "")
+
+    def test_tts_cleanup_does_not_change_visible_chat_text(self):
+        record = make_chat_record({
+            "id": "emoji-message",
+            "snippet": {"type": "textMessageEvent", "displayMessage": "Hello 🔥"},
+            "authorDetails": {"displayName": "Viewer", "channelId": "UC-viewer"},
+        })
+        self.assertEqual(record["text"], "Hello 🔥")
+        self.assertEqual(speech_text_for(record), "Viewer: Hello")
+
+
+    def test_short_chat_messages_are_combined_with_context(self):
+        batch = compose_short_chat_batch([
+            {"id": "m1", "name": "Alice", "body": "hi", "created_at": "now"},
+            {"id": "m2", "name": "Bob", "body": "gg", "created_at": "later"},
+        ])
+        self.assertEqual(batch["source_ids"], ["m1", "m2"])
+        self.assertEqual(batch["combined_count"], 2)
+        self.assertIn("Quick chat update.", batch["text"])
+        self.assertIn("Alice says: hi", batch["text"])
+        self.assertIn("Bob says: gg", batch["text"])
 
 
 class QueueTests(unittest.TestCase):

@@ -1,5 +1,5 @@
 #define MyAppName "NinuGaming Live Assistant"
-#define MyAppVersion "2.1.0"
+#define MyAppVersion "2.3.0-rc.2"
 #define MyAppPublisher "NinuGaming"
 #define MyAppExeName "NinuGamingLiveAssistant.exe"
 
@@ -20,6 +20,7 @@ OutputBaseFilename=NinuGamingLiveAssistant-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=yes
 RestartApplications=no
@@ -32,13 +33,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Dirs]
+Name: "{commonappdata}\NinuGamingLiveAssistant"; Permissions: users-modify
 Name: "{commonappdata}\NinuGamingLiveAssistant\models"; Permissions: users-modify
+Name: "{commonappdata}\NinuGamingLiveAssistant\runtime"; Permissions: users-modify
+Name: "{commonappdata}\NinuGamingLiveAssistant\kokoro-runtime"; Permissions: users-modify
 
 [Files]
 Source: "dist\NinuGamingLiveAssistant\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "models\kokoro-v1.0.fp16.onnx"; DestDir: "{commonappdata}\NinuGamingLiveAssistant\models"; Flags: ignoreversion
-Source: "models\kokoro-v1.0.int8.onnx"; DestDir: "{commonappdata}\NinuGamingLiveAssistant\models"; Flags: ignoreversion
-Source: "models\voices-v1.0.bin"; DestDir: "{commonappdata}\NinuGamingLiveAssistant\models"; Flags: ignoreversion
 Source: "installer_assets\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "installer_assets\MicrosoftEdgeWebView2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -66,6 +67,6 @@ end;
 
 function WebView2AlreadyInstalled: Boolean;
 begin
-  Result := DirExists(ExpandConstant('{pf86}\Microsoft\EdgeWebView\Application')) or
-            DirExists(ExpandConstant('{pf}\Microsoft\EdgeWebView\Application'));
+  Result := DirExists(ExpandConstant('{pf64}\Microsoft\EdgeWebView\Application')) or
+            DirExists(ExpandConstant('{pf32}\Microsoft\EdgeWebView\Application'));
 end;
