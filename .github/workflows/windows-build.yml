@@ -54,32 +54,37 @@ jobs:
           name: NinuGamingLiveAssistant-Setup
           path: installer/NinuGamingLiveAssistant-Setup.exe
           retention-days: 30
-      - name: Publish Kokoro CUDA release candidate
+      - name: Publish Kokoro PyTorch CUDA release candidate
         if: github.event_name == 'push' && github.ref == 'refs/heads/feature/vibevoice-cuda' && startsWith(github.event.head_commit.message, 'Publish release')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.3.0-rc.1
+          tag_name: v2.3.0-rc.2
           target_commitish: feature/vibevoice-cuda
-          name: NinuGaming Live Assistant v2.3.0-rc.1
+          name: NinuGaming Live Assistant v2.3.0-rc.2
           body: |
-            ## NinuGaming Live Assistant v2.3.0 Release Candidate 1
+            ## NinuGaming Live Assistant v2.3.0 Release Candidate 2
 
-            This release candidate switches speech synthesis to Kokoro-82M v1.0 FP16 ONNX through NVIDIA ONNX Runtime CUDA.
+            This release candidate replaces the failing strict ONNX CUDA graph session with the native Kokoro-v1.0 PyTorch model on NVIDIA CUDA.
+
+            ### GPU-only model inference
+            - Installs PyTorch 2.11.0 from the official CUDA 12.8 Windows wheel index.
+            - Runs the original Kokoro-82M v1.0 model with its parameters and buffers on cuda:0.
+            - Refuses to start when a CUDA-enabled PyTorch runtime or NVIDIA GPU is unavailable.
+            - No CPU model-inference fallback is implemented.
+            - Text normalization, phonemization, and final audio playback remain CPU-side desktop I/O.
 
             ### Included
-            - Windows x64 desktop installer with the full red app icon.
-            - 27 selected American and British English Kokoro voice presets.
-            - NVIDIA CUDAExecutionProvider with ONNX Runtime CPU node fallback explicitly disabled.
-            - Streaming sentence/clause audio with voice speed and volume controls.
-            - Short-chat batching and TTS cleanup for emoji/symbol noise and unsupported scripts.
-            - SHA-256 verified Kokoro FP16 model and voice pack downloads.
-            - Separate lightweight first-run speech runtime; no PyTorch/VibeVoice installation.
+            - Lightweight Windows x64 desktop installer with the full red app icon.
+            - 27 selected American and British English Kokoro voices.
+            - Streaming sentence audio, speed/volume controls, and GPU warm-up validation.
+            - Short-chat batching and TTS cleanup while retaining original messages in the UI.
+            - Existing YouTube chat inbox, Genshin UID detection/review queue, and OBS overlay.
 
             ### Before installing
-            - Requires a supported NVIDIA GPU and compatible current NVIDIA driver.
-            - First launch installs ONNX Runtime GPU/CUDA/cuDNN and downloads about 190 MB of model and voice data.
-            - Speech synthesis uses GPU resources and may compete with a game.
-            - Actual CUDA audio playback still needs testing on the installer's PC.
+            - Requires a supported NVIDIA GPU, current compatible NVIDIA driver, internet access, and several GB of free disk space.
+            - First launch installs PyTorch CUDA and Kokoro in a separate runtime, then downloads model weights and selected voices from Hugging Face.
+            - Speech synthesis uses GPU resources and may compete with a running game.
+            - CI can validate packaging and code tests but cannot prove local RTX 3060 audio playback.
             - This is a release candidate, not a stable release.
           files: installer/NinuGamingLiveAssistant-Setup.exe
           draft: false
