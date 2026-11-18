@@ -5,7 +5,7 @@ if not exist ".venv\Scripts\python.exe" call setup.bat
 if not exist ".venv\Scripts\python.exe" exit /b 1
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 if errorlevel 1 goto :fail
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onedir --windowed --name NinuGamingLiveAssistant --add-data "ui.html;." --add-data "obs.html;." --add-data "vibevoice_worker.py;." --collect-all webview app.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onedir --windowed --name NinuGamingLiveAssistant --icon "app.ico" --add-data "app.ico;." --add-data "ui.html;." --add-data "obs.html;." --add-data "vibevoice_worker.py;." --collect-all webview app.py
 if errorlevel 1 goto :fail
 set "ISCC="
 for %%P in ("C:\Program Files (x86)\Inno Setup 7\ISCC.exe" "C:\Program Files\Inno Setup 7\ISCC.exe") do if exist "%%~P" set "ISCC=%%~P"
