@@ -98,7 +98,7 @@ class NeuralSpeechEngine:
 
     @staticmethod
     def _clamp_speed(value: float) -> float:
-        return max(0.70, min(1.40, float(value)))
+        return max(1.0, min(1.40, float(value)))
 
     @staticmethod
     def _clamp_volume(value: int) -> int:
