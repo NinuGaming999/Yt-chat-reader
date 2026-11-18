@@ -138,6 +138,16 @@ class TtsInputPreparationTests(unittest.TestCase):
         self.assertEqual(clean_tts_text("🔥✨"), "")
         self.assertEqual(clean_tts_text("東京"), "")
 
+    def test_tts_cleanup_does_not_change_visible_chat_text(self):
+        record = make_chat_record({
+            "id": "emoji-message",
+            "snippet": {"type": "textMessageEvent", "displayMessage": "Hello 🔥"},
+            "authorDetails": {"displayName": "Viewer", "channelId": "UC-viewer"},
+        })
+        self.assertEqual(record["text"], "Hello 🔥")
+        self.assertEqual(speech_text_for(record), "Viewer: Hello")
+
+
     def test_short_chat_messages_are_combined_with_context(self):
         batch = compose_short_chat_batch([
             {"id": "m1", "name": "Alice", "body": "hi", "created_at": "now"},
