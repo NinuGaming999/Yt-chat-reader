@@ -2,11 +2,16 @@
 
 NinuGaming Live Assistant v2.3.0 uses:
 
-- **Kokoro-82M v1.0 model** — Apache License 2.0; the official FP16 ONNX model and voice pack are downloaded and SHA-256 verified on first launch.
-- **kokoro-onnx 0.6.1** — MIT License.
-- **ONNX Runtime GPU 1.26.0** — MIT License; installed with NVIDIA CUDA/cuDNN runtime dependencies. The application selects CUDAExecutionProvider and disables CPU execution-provider fallback.
-- **eSpeak NG loader, phonemizer, NumPy, SoundDevice, and related dependencies** — their respective upstream licenses apply.
-- **Python 3.12.10 embeddable runtime** — Python Software Foundation License.
-- **Microsoft Edge WebView2 Runtime and Microsoft Visual C++ runtime** — Microsoft's applicable license terms.
+- **Kokoro-82M v1.0 model** — Apache License 2.0; model weights are downloaded from the official Hugging Face repository on first launch.
+- **Kokoro 0.9.4** — Apache License 2.0; native PyTorch model and language-aware inference pipeline.
+- **PyTorch 2.11.0 with CUDA 12.8** — BSD-style license; installed from the official PyTorch CUDA wheel index.
+- **NVIDIA CUDA and cuDNN runtime components** — NVIDIA license terms apply to the bundled Python runtime dependencies.
+- **Misaki** — MIT License; English grapheme-to-phoneme processing used by Kokoro.
+- **SoundDevice** — MIT License; audio playback interface.
+- **Flask** — BSD-3-Clause License.
+- **Requests** — Apache License 2.0.
+- **pywebview** — BSD-3-Clause License.
 
-See the linked upstream projects and license files for the complete license texts.
+The YouTube Live Chat API is provided by Google and is subject to the Google APIs Terms of Service and YouTube API Services Terms of Service.
+
+Refer to each installed distribution's license and notices for the complete terms of its dependencies.
