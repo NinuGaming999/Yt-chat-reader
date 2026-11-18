@@ -1,4 +1,5 @@
 name: Build Windows desktop installer
+# RC2 uses the native Kokoro PyTorch CUDA worker; no CPU model inference fallback.
 on:
   push:
     branches: [main, feature/vibevoice-cuda]
