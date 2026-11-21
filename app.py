@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import base64
+import csv
 import json
 import os
 import re
@@ -11,7 +12,7 @@ import sys
 import threading
 import time
 import webbrowser
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,10 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from speech_engine import DEFAULT_SPEED, DEFAULT_VOICE, DEFAULT_VOLUME, NeuralSpeechEngine, VOICE_CATALOG
+from chat_tools import (DEFAULT_FILTERS, PAID_KINDS, PRIORITY_LABELS, SpamFilter, clean_for_speech, clean_name_for_speech,
+                        enqueue_with_priority, mark_duplicate_uids, non_latin_ratio, pick_uid, sanitize_filters, speech_priority)
+from hotkeys import HotkeyManager
+from secure_store import protect_secret, unprotect_secret
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
@@ -29,7 +34,8 @@ except ImportError:
     webview = None
 
 APP_NAME = "NinuGaming Live Assistant"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
+GITHUB_REPO = "NinuGaming999/Yt-chat-reader"
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 DAILY_RUNTIME_LIMIT_SECONDS = 4 * 60 * 60
@@ -41,6 +47,10 @@ MAX_SPEECH_HISTORY = 100
 MAX_PENDING_SPEECH = 500
 MAX_SEEN_IDS = 20_000
 MAX_LOGS = 250
+SOFT_LOW_PRIORITY_LIMIT = 40
+READ_MODES = {"all", "review_only", "priority", "off"}
+SECRET_KEYS = ("api_key", "backup_api_key")
+MAX_CHATTERS = 20_000
 
 if os.name == "nt":
     DATA_ROOT = Path(os.environ.get("APPDATA", str(Path.home() / "AppData/Roaming"))) / "NinuGamingLiveAssistant"
@@ -50,6 +60,7 @@ DATA_ROOT.mkdir(parents=True, exist_ok=True)
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 CONFIG_FILE = DATA_ROOT / "config.json"
 QUEUE_FILE = DATA_ROOT / "review_queue.json"
+EXPORT_DIR = DATA_ROOT / "exports"
 
 INTENT_PHRASES: dict[str, int] = {
     "review my account": 4, "review my acc": 4, "account review": 4,
@@ -114,8 +125,7 @@ def normalize_text(text: str) -> str:
 
 
 def extract_uid(text: str) -> str | None:
-    match = UID_PATTERN.search(text or "")
-    return match.group(1) if match else None
+    return pick_uid(text or "")
 
 
 def classify_review_request(text: str) -> dict[str, Any]:
@@ -201,7 +211,7 @@ def make_chat_record(item: dict[str, Any]) -> dict[str, Any]:
     author = item.get("authorDetails") or {}
     text, kind = message_text(item)
     classification = classify_review_request(text)
-    return {
+    record = {
         "id": str(item.get("id") or f"no-id-{time.time_ns()}"),
         "name": str(author.get("displayName") or "Viewer"),
         "channel_id": str(author.get("channelId") or ""),
@@ -216,17 +226,24 @@ def make_chat_record(item: dict[str, Any]) -> dict[str, Any]:
         "reason": classification["reason"],
         "read_state": "pending",
         "read_reason": "Waiting for routing decision",
+        "is_mod": bool(author.get("isChatModerator")),
+        "is_owner": bool(author.get("isChatOwner")),
+        "is_member": bool(author.get("isChatSponsor")),
     }
+    record["priority"] = speech_priority(record)
+    return record
 
 
-def speech_text_for(record: dict[str, Any]) -> str | None:
-    text = " ".join(str(record.get("text") or "").split())
-    if not text or text == "[Non-text chat event]":
+def speech_text_for(record: dict[str, Any], settings: dict[str, Any] | None = None, include_name: bool = True) -> str | None:
+    raw = " ".join(str(record.get("text") or "").split())
+    if not raw or raw == "[Non-text chat event]":
         return None
-    if len(text) > 420:
-        text = text[:417] + "..."
-    name = " ".join(str(record.get("name") or "Viewer").split())[:60]
-    return f"{name}: {text}"
+    text = clean_for_speech(raw, settings)
+    if not text:
+        return None
+    if not include_name:
+        return text
+    return f"{clean_name_for_speech(record.get('name') or 'Viewer', settings)}: {text}"
 
 
 def estimate_four_hour_quota(min_delay_seconds: int) -> int:
@@ -241,7 +258,16 @@ class UsageLedger:
         self.path = path or (DATA_ROOT / "usage.json")
         self.lock = threading.RLock()
         self.data: dict[str, Any] = {}
+        self.slot_key = "quota_units"
         self._load()
+
+    @property
+    def using_backup(self) -> bool:
+        return self.slot_key == "backup_quota_units"
+
+    def use_backup(self, flag: bool) -> None:
+        with self.lock:
+            self.slot_key = "backup_quota_units" if flag else "quota_units"
 
     @staticmethod
     def today() -> str:
@@ -254,12 +280,13 @@ class UsageLedger:
         data.setdefault("quota_units", 0)
         data.setdefault("runtime_seconds", 0.0)
         data.setdefault("api_calls", 0)
+        data.setdefault("backup_quota_units", 0)
         self.data = data
         self._save()
 
     def _ensure_day(self) -> None:
         if self.data.get("date") != self.today():
-            self.data = {"date": self.today(), "quota_units": 0, "runtime_seconds": 0.0, "api_calls": 0}
+            self.data = {"date": self.today(), "quota_units": 0, "backup_quota_units": 0, "runtime_seconds": 0.0, "api_calls": 0}
 
     def _save(self) -> None:
         atomic_write_json(self.path, self.data)
@@ -267,10 +294,11 @@ class UsageLedger:
     def reserve_quota(self, units: int) -> bool:
         with self.lock:
             self._ensure_day()
-            if int(self.data["quota_units"]) + units > SAFE_QUOTA_BUDGET_UNITS:
+            used = int(self.data.get(self.slot_key, 0))
+            if used + units > SAFE_QUOTA_BUDGET_UNITS:
                 self._save()
                 return False
-            self.data["quota_units"] = int(self.data["quota_units"]) + units
+            self.data[self.slot_key] = used + units
             self.data["api_calls"] = int(self.data["api_calls"]) + 1
             self._save()
             return True
@@ -292,7 +320,7 @@ class UsageLedger:
         return max(0.0, DAILY_RUNTIME_LIMIT_SECONDS - float(self.snapshot()["runtime_seconds"]))
 
     def remaining_quota(self) -> int:
-        return max(0, SAFE_QUOTA_BUDGET_UNITS - int(self.snapshot()["quota_units"]))
+        return max(0, SAFE_QUOTA_BUDGET_UNITS - int(self.snapshot().get(self.slot_key, 0)))
 
 
 class YouTubeAPIError(RuntimeError):
@@ -352,19 +380,31 @@ class YouTubeClient:
 
 
 class ReviewQueue:
-    def __init__(self, path: Path = QUEUE_FILE) -> None:
+    def __init__(self, path: Path = QUEUE_FILE, history_path: Path | None = None) -> None:
         self.path = path
+        self.history_path = history_path or path.with_name(path.stem + "_history.json")
         self.lock = threading.RLock()
         loaded = safe_read_json(path, [])
         self.items: list[dict[str, Any]] = loaded if isinstance(loaded, list) else []
+        history = safe_read_json(self.history_path, [])
+        self.history: list[dict[str, Any]] = history if isinstance(history, list) else []
         self._save()
 
     def _save(self) -> None:
         atomic_write_json(self.path, self.items)
 
+    def _log_history(self, item: dict[str, Any], status: str) -> None:
+        self.history.insert(0, {**item, "status": status, "finished_at": now_iso()})
+        del self.history[500:]
+        atomic_write_json(self.history_path, self.history)
+
     def snapshot(self) -> list[dict[str, Any]]:
         with self.lock:
-            return [dict(x) for x in self.items]
+            return mark_duplicate_uids(self.items)
+
+    def history_snapshot(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.lock:
+            return [dict(x) for x in self.history[:limit]]
 
     def upsert(self, record: dict[str, Any]) -> str:
         channel_id = record.get("channel_id") or record.get("id")
@@ -385,22 +425,58 @@ class ReviewQueue:
             self._save()
             return "added"
 
+    def _index(self, channel_id: str) -> int:
+        return next((i for i, x in enumerate(self.items) if x.get("channel_id") == channel_id), -1)
+
     def remove(self, channel_id: str) -> bool:
         with self.lock:
-            before = len(self.items)
-            self.items = [x for x in self.items if x.get("channel_id") != channel_id]
-            changed = len(self.items) != before
-            if changed:
-                self._save()
-            return changed
+            i = self._index(channel_id)
+            if i < 0:
+                return False
+            self._log_history(self.items.pop(i), "removed")
+            self._save()
+            return True
 
     def pop_next(self) -> dict[str, Any] | None:
+        return self.complete(None)
+
+    def complete(self, channel_id: str | None) -> dict[str, Any] | None:
+        """Mark a viewer as reviewed (default: the first in line) and move them to history."""
         with self.lock:
-            if not self.items:
+            i = 0 if channel_id is None and self.items else (self._index(channel_id) if channel_id else -1)
+            if i < 0 or i >= len(self.items):
                 return None
-            result = self.items.pop(0)
+            result = self.items.pop(i)
+            self._log_history(result, "done")
             self._save()
             return result
+
+    def move(self, channel_id: str, where: str) -> bool:
+        with self.lock:
+            i = self._index(channel_id)
+            if i < 0:
+                return False
+            target = {"up": i - 1, "down": i + 1, "top": 0, "bottom": len(self.items) - 1}.get(where, i)
+            target = max(0, min(len(self.items) - 1, target))
+            if target == i:
+                return True
+            self.items.insert(target, self.items.pop(i))
+            self._save()
+            return True
+
+    def edit(self, channel_id: str, uid: str | None = None, request: str | None = None) -> bool:
+        with self.lock:
+            i = self._index(channel_id)
+            if i < 0:
+                return False
+            if uid is not None:
+                clean = re.sub(r"\D", "", uid)
+                self.items[i]["uid"] = clean or "not given"
+            if request is not None:
+                self.items[i]["request"] = " ".join(request.split())[:200] or "Account review"
+            self.items[i]["updated_at"] = now_iso()
+            self._save()
+            return True
 
     def clear(self) -> None:
         with self.lock:
@@ -446,6 +522,17 @@ class LiveAssistant:
         stored = safe_read_json(CONFIG_FILE, {})
         if not isinstance(stored, dict):
             stored = {}
+        self.filter = SpamFilter(sanitize_filters(stored.get("filters") or {}))
+        self.auto_reconnect = bool(stored.get("auto_reconnect", True))
+        self.read_counts: Counter = Counter()
+        self.kind_counts: Counter = Counter()
+        self.chatters: dict[str, list[Any]] = {}
+        self.msg_times: deque[float] = deque(maxlen=900)
+        self.spoken_count = 0
+        self.dropped_count = 0
+        self._alerts_logged: set[str] = set()
+        self._last_name = ""
+        self._last_name_at = 0.0
         self.shutdown_event = threading.Event()
         self.tts = NeuralSpeechEngine(
             Path(__file__).resolve().parent,
@@ -456,7 +543,82 @@ class LiveAssistant:
         )
         self.speech_thread = threading.Thread(target=self._speech_loop, name="speech-worker", daemon=True)
         self.speech_thread.start()
+        self.hotkeys = HotkeyManager({
+            "next_review": self._hotkey_next_review,
+            "stop_current": lambda: self.tts.stop_current(),
+            "pause_voice": lambda: self.speech_pause(not self.speech_paused),
+            "skip_next": lambda: self.speech_skip_next(),
+        })
+        if stored.get("hotkeys_enabled", True):
+            self.hotkeys.start()
         self.log("Desktop assistant initialized. Kokoro neural voice model is loading in the background.")
+
+    def _hotkey_next_review(self) -> None:
+        item = self.review_queue.pop_next()
+        self.log(f"Hotkey: next review viewer is {item.get('name', 'viewer')}." if item else "Hotkey: review queue is empty.")
+
+    def set_hotkeys(self, enabled: bool) -> dict[str, Any]:
+        if enabled:
+            self.hotkeys.start()
+        else:
+            self.hotkeys.stop()
+        return self.hotkeys.status()
+
+    def set_filters(self, payload: dict[str, Any]) -> dict[str, Any]:
+        cfg = sanitize_filters(payload, self.filter.raw)
+        self.filter.configure(cfg)
+        return cfg
+
+    def alerts(self) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        used = SAFE_QUOTA_BUDGET_UNITS - self.ledger.remaining_quota()
+        pct = used * 100 // SAFE_QUOTA_BUDGET_UNITS
+        if pct >= 90:
+            out.append({"key": "quota90", "level": "critical", "text": f"Quota almost used up: {pct}% of today's safety budget. The listener stops at 100%."})
+        elif pct >= 70:
+            out.append({"key": "quota70", "level": "warn", "text": f"Quota warning: {pct}% of today's safety budget is used."})
+        left = self.ledger.remaining_runtime()
+        if self.running and left <= 600:
+            out.append({"key": "run10", "level": "critical", "text": f"Only {int(left // 60)} min of today's 4-hour runtime are left."})
+        elif self.running and left <= 1800:
+            out.append({"key": "run30", "level": "warn", "text": f"{int(left // 60)} min of today's 4-hour runtime are left."})
+        if self.ledger.using_backup:
+            out.append({"key": "backup", "level": "info", "text": "Using the backup API key (the primary key reached its quota)."})
+        return out
+
+    def _check_alerts(self) -> None:
+        for a in self.alerts():
+            if a["key"] not in self._alerts_logged:
+                self._alerts_logged.add(a["key"])
+                self.log(a["text"], "warning" if a["level"] != "info" else "info")
+
+    def _rotate_key(self, backup_key: str) -> "YouTubeClient | None":
+        if not backup_key or self.ledger.using_backup:
+            return None
+        self.ledger.use_backup(True)
+        self.log("Primary API key reached its quota; switched to the backup API key.", "warning")
+        with self.lock:
+            self.status = "Switched to the backup API key"
+        return YouTubeClient(backup_key, self.ledger)
+
+    def _wait_for_chat_return(self, client: "YouTubeClient") -> str:
+        """Chat ended/not found: the stream may just have dropped. Re-check once a minute for 10 minutes."""
+        if not self.auto_reconnect:
+            return ""
+        for attempt in range(1, 11):
+            with self.lock:
+                self.connected = False
+                self.status = f"Chat ended — checking for the stream again (attempt {attempt}/10)"
+            self.log(f"Live chat is not available. Auto-reconnect check {attempt}/10 in 60s.", "warning")
+            if not self._wait(60):
+                return ""
+            try:
+                chat_id = client.get_live_chat_id(self.video_id)
+                self.log("Live chat is back — reconnecting.")
+                return chat_id
+            except (YouTubeAPIError, RuntimeError, requests.RequestException):
+                continue
+        return ""
 
     def _on_tts_status(self, status: str, level: str = "info") -> None:
         self.log(status, level)
@@ -477,7 +639,7 @@ class LiveAssistant:
         if previous and active:
             self.ledger.add_runtime(max(0.0, now - previous))
 
-    def start(self, api_key: str, stream_url: str, min_delay: int, read_mode: str, read_existing: bool) -> tuple[bool, str]:
+    def start(self, api_key: str, stream_url: str, min_delay: int, read_mode: str, read_existing: bool, backup_key: str = "") -> tuple[bool, str]:
         with self.lock:
             if self.running:
                 return False, "The chat listener is already running."
@@ -490,8 +652,14 @@ class LiveAssistant:
             remaining = self.ledger.remaining_runtime()
             if remaining <= 0:
                 return False, "Today's four-hour runtime allowance has been used. It resets at midnight Pacific Time."
+            self.ledger.use_backup(False)
             if self.ledger.remaining_quota() < 6:
-                return False, "The local quota safety budget is nearly exhausted for today."
+                if backup_key.strip():
+                    self.ledger.use_backup(True)
+                    if self.ledger.remaining_quota() < 6:
+                        return False, "Both API keys have used today's local quota safety budget."
+                else:
+                    return False, "The local quota safety budget is nearly exhausted for today."
             self.stop_event.clear()
             self.running = True
             self.connected = False
@@ -500,7 +668,7 @@ class LiveAssistant:
             self.last_error = ""
             self.video_id = video_id
             self.min_delay = max(10, min(120, int(min_delay)))
-            self.read_mode = read_mode if read_mode in {"all", "review_only", "off"} else "all"
+            self.read_mode = read_mode if read_mode in READ_MODES else "all"
             self.read_existing = bool(read_existing)
             self.session_started = now_iso()
             self.last_runtime_tick = time.monotonic()
@@ -508,7 +676,13 @@ class LiveAssistant:
             self.review_added_count = 0
             self.last_poll_at = self.last_message_at = ""
             self.seen_ids.clear()
-            self.worker = threading.Thread(target=self._run_listener, args=(api_key.strip(),), name="youtube-chat-listener", daemon=True)
+            self.read_counts.clear()
+            self.kind_counts.clear()
+            self.chatters.clear()
+            self.msg_times.clear()
+            self.spoken_count = self.dropped_count = 0
+            self._alerts_logged.clear()
+            self.worker = threading.Thread(target=self._run_listener, args=(api_key.strip(), backup_key.strip()), name="youtube-chat-listener", daemon=True)
             self.worker.start()
             self.log(f"Listener starting for video {video_id}; read mode={self.read_mode}; minimum delay={self.min_delay}s.")
             return True, "Connecting…"
@@ -567,8 +741,13 @@ class LiveAssistant:
         with self.lock:
             self.message_count += 1
             self.last_message_at = record["published_at"]
+            self.kind_counts[record["kind"]] += 1
+            self.msg_times.append(time.time())
             if record["full_comment"]:
                 self.text_count += 1
+                cid = record["channel_id"] or record["name"]
+                if cid in self.chatters or len(self.chatters) < MAX_CHATTERS:
+                    self.chatters.setdefault(cid, [record["name"], 0])[1] += 1
             if backlog and not self.read_existing:
                 record["read_state"] = "skipped"
                 record["read_reason"] = "This message was already in chat when the listener connected. Enable reading the starting backlog to include it."
@@ -598,17 +777,27 @@ class LiveAssistant:
                 elif self.read_mode == "review_only" and not candidate:
                     record["read_state"] = "filtered"
                     record["read_reason"] = "Speech mode is set to review requests only; this message was not classified as one."
+                elif self.read_mode == "priority" and record["priority"] > 2:
+                    record["read_state"] = "filtered"
+                    record["read_reason"] = "Speech mode reads only Super Chats, members, mods and review requests."
                 else:
-                    queued = self._enqueue_speech(record)
-                    record["read_state"] = "queued" if queued else "queue full"
-                    record["read_reason"] = "Added to the speech queue." if queued else "Speech queue is full; this message was not queued."
+                    allowed, why = self._speech_gate(record)
+                    if not allowed:
+                        record["read_state"] = "filtered"
+                        record["read_reason"] = why
+                    else:
+                        queued = self._enqueue_speech(record)
+                        record["read_state"] = "queued" if queued else "queue full"
+                        record["read_reason"] = (f"Added to the speech queue ({PRIORITY_LABELS.get(record['priority'], 'Chat')})." if queued
+                                                 else "Nothing speakable in this message, or the queue is full of higher-priority speech.")
+            self.read_counts[record["read_state"]] += 1
             self.messages.appendleft(record)
         if record.get("review_candidate") and not backlog:
             self.log(f"Review request detected: {record['name']} • UID {record.get('uid') or 'not given'} • {record['confidence']} confidence.")
         if record["read_state"] == "queued":
             self.log(f"Queued for speech: {record['name']}: {record['text'][:110]}")
 
-    def _run_listener(self, api_key: str) -> None:
+    def _run_listener(self, api_key: str, backup_key: str = "") -> None:
         client = YouTubeClient(api_key, self.ledger)
         page_token: str | None = None
         first_batch = True
@@ -651,6 +840,10 @@ class LiveAssistant:
                     self.log("Four-hour daily runtime allowance reached.", "warning")
                     break
                 if self.ledger.remaining_quota() < 5:
+                    switched = self._rotate_key(backup_key)
+                    if switched is not None:
+                        client = switched
+                        continue
                     self.log("Quota safety budget reached. Listener stopped to protect the project quota.", "warning")
                     break
                 try:
@@ -669,6 +862,7 @@ class LiveAssistant:
                             break
                         self._route_message(raw, backlog=first_batch)
                     first_batch = False
+                    self._check_alerts()
                     page_token = data.get("nextPageToken")
                     requested = max(0.0, float(data.get("pollingIntervalMillis", 5000)) / 1000.0)
                     interval = max(float(self.min_delay), requested)
@@ -694,12 +888,22 @@ class LiveAssistant:
                             break
                         continue
                     if exc.reason == "quotaExceeded" or exc.reason == "dailyLimitExceeded":
+                        switched = self._rotate_key(backup_key)
+                        if switched is not None:
+                            client = switched
+                            continue
                         self.log("YouTube project quota is exhausted. Check Cloud Console; this project may be shared with other apps.", "error")
                         self.status = "Stopped: YouTube project quota exhausted"
                         self.last_error = str(exc)
                         break
                     if exc.reason in {"liveChatEnded", "liveChatDisabled", "liveChatNotFound"}:
                         self.log(str(exc), "warning")
+                        revived = self._wait_for_chat_return(client)
+                        if revived:
+                            chat_id, page_token, first_batch = revived, None, True
+                            with self.lock:
+                                self.chat_id, self.connected, self.status = revived, True, "Reconnected — waiting for chat messages"
+                            continue
                         self.status = "Stream chat is no longer available"
                         self.last_error = str(exc)
                         break
@@ -758,21 +962,38 @@ class LiveAssistant:
         chat_id = client.get_live_chat_id(video_id)
         return {"ok": True, "video_id": video_id, "chat_id_found": bool(chat_id), "message": "YouTube reports an active live chat."}
 
+    def _speech_gate(self, record: dict[str, Any]) -> tuple[bool, str]:
+        """Spam / language / ignore rules. Paid events and review requests always pass."""
+        if record.get("priority", 3) <= 1:
+            return True, ""
+        cfg = self.filter.settings
+        if cfg.get("skip_non_latin", True) and non_latin_ratio(record.get("text", "")) > 0.5:
+            return False, "Mostly non-English script — the English neural voice cannot read it (change in Tools → Filters)."
+        return self.filter.check(record.get("channel_id", ""), record.get("name", ""), record.get("full_comment", ""))
+
     def _enqueue_speech(self, record: dict[str, Any]) -> bool:
-        text = speech_text_for(record)
+        cfg = self.filter.settings
+        now = time.monotonic()
+        same_viewer = record.get("name") == self._last_name and now - self._last_name_at < 20
+        include_name = not (cfg.get("drop_repeat_name", True) and same_viewer and record.get("priority", 3) >= 3)
+        text = speech_text_for(record, cfg, include_name)
         if not text:
             return False
+        entry = {
+            "id": record["id"], "name": record["name"], "text": text,
+            "created_at": now_iso(), "kind": record.get("kind", "textMessageEvent"),
+            "review_candidate": record.get("review_candidate", False),
+            "priority": int(record.get("priority", 3)),
+        }
         with self.speech_condition:
-            if len(self.pending_speech) >= MAX_PENDING_SPEECH:
-                return False
-            entry = {
-                "id": record["id"], "name": record["name"], "text": text,
-                "created_at": now_iso(), "kind": record.get("kind", "textMessageEvent"),
-                "review_candidate": record.get("review_candidate", False),
-            }
-            self.pending_speech.append(entry)
-            self.speech_condition.notify_all()
-            return True
+            accepted, dropped = enqueue_with_priority(self.pending_speech, entry, MAX_PENDING_SPEECH, SOFT_LOW_PRIORITY_LIMIT)
+            if accepted:
+                self._last_name, self._last_name_at = record.get("name", ""), now
+                self.speech_condition.notify_all()
+        for old in dropped:
+            self.dropped_count += 1
+            self._update_chat_read_state(str(old.get("id", "")), "skipped", "Dropped: the speech queue was crowded, so older chat was replaced by newer or higher-priority lines.")
+        return accepted
 
     def _update_chat_read_state(self, message_id: str, state: str, reason: str) -> None:
         with self.lock:
@@ -785,6 +1006,8 @@ class LiveAssistant:
     def enqueue_message_now(self, message_id: str) -> bool:
         with self.lock:
             record = next((dict(m) for m in self.messages if m["id"] == message_id), None)
+        if record:
+            record["priority"] = min(int(record.get("priority", 3)), 1)   # manual "read this" jumps ahead
         if not record or not self._enqueue_speech(record):
             return False
         self._update_chat_read_state(message_id, "queued", "Manually added to the speech queue by the streamer.")
@@ -845,6 +1068,7 @@ class LiveAssistant:
                 self.speech_history.appendleft(completed)
                 self.speech_condition.notify_all()
             if success:
+                self.spoken_count += 1
                 self._update_chat_read_state(str(item.get("id", "")), "spoken", "Kokoro neural speech completed successfully.")
                 self.log(f"Finished speaking with {self.tts.voice}: {item['name']} — {item['text'][:110]}")
             elif cancelled:
@@ -923,34 +1147,108 @@ class LiveAssistant:
             "usage": usage, "runtime_seconds_left": seconds_left,
             "quota_units_left": self.ledger.remaining_quota(),
             "review_queue_count": len(self.review_queue.snapshot()),
+            "quota_units_used": int(usage.get(self.ledger.slot_key, 0)),
+            "alerts": self.alerts(), "stats": self.session_stats(),
+            "filters": self.filter.raw, "auto_reconnect": self.auto_reconnect,
+            "hotkeys": self.hotkeys.status(), "using_backup_key": self.ledger.using_backup,
         }
+
+    def session_stats(self) -> dict[str, Any]:
+        with self.lock:
+            now = time.time()
+            top = sorted(self.chatters.values(), key=lambda x: -x[1])[:5]
+            return {
+                "messages": self.message_count, "unique_chatters": len(self.chatters),
+                "messages_per_minute": sum(1 for t in self.msg_times if now - t <= 60),
+                "top_chatters": [{"name": n, "count": c} for n, c in top],
+                "paid_and_member_events": sum(self.kind_counts[k] for k in PAID_KINDS),
+                "queued": self.read_counts.get("queued", 0), "filtered": self.read_counts.get("filtered", 0),
+                "spoken": self.spoken_count, "dropped": self.dropped_count,
+                "review_added": self.review_added_count, "started": self.session_started,
+            }
+
+    def overlay_state(self) -> dict[str, Any]:
+        """Small payload for OBS browser sources (instead of the full dashboard state)."""
+        keep = ("id", "name", "text", "kind", "is_mod", "is_owner", "is_member", "published_at")
+        with self.lock:
+            chat = [{k: m.get(k) for k in keep} for m in list(self.messages)[:25] if m.get("full_comment") or m.get("kind") in PAID_KINDS]
+            running, connected = self.running, self.connected
+        with self.speech_condition:
+            current = self.current_speech
+            speaking = {"name": current.get("name"), "text": current.get("text")} if current else None
+            paused = self.speech_paused
+        queue = [{k: x.get(k) for k in ("name", "uid", "uid_region", "uid_valid", "dup_uid", "request", "full_comment")} for x in self.review_queue.snapshot()]
+        return {"running": running, "connected": connected, "speech_paused": paused, "currently_speaking": speaking,
+                "review_queue": queue[:12], "review_queue_count": len(queue), "chat": chat, "version": APP_VERSION}
 
 
 assistant = LiveAssistant()
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="/static")
 
 
+def protect_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    out = dict(cfg)
+    for k in SECRET_KEYS:
+        out[k] = protect_secret(str(out.get(k) or ""))
+    return out
+
+
+def write_config(cfg: dict[str, Any]) -> None:
+    atomic_write_json(CONFIG_FILE, protect_config(cfg))
+
+
 def load_config() -> dict[str, Any]:
-    data = safe_read_json(CONFIG_FILE, {})
-    return data if isinstance(data, dict) else {}
+    raw = safe_read_json(CONFIG_FILE, {})
+    if not isinstance(raw, dict):
+        return {}
+    data = dict(raw)
+    for k in SECRET_KEYS:
+        data[k] = unprotect_secret(str(data.get(k) or ""))
+    if os.name == "nt" and any(raw.get(k) and not str(raw[k]).startswith("dpapi:") for k in SECRET_KEYS):
+        try:
+            write_config(data)          # migrate old plain-text keys to Windows-encrypted storage
+        except OSError:
+            pass
+    return data
+
+
+def public_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "api_key_set": bool(cfg.get("api_key")), "backup_key_set": bool(cfg.get("backup_api_key")),
+        "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY),
+        "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False),
+        "tts_voice": cfg.get("tts_voice", DEFAULT_VOICE), "tts_speed": cfg.get("tts_speed", DEFAULT_SPEED),
+        "tts_volume": cfg.get("tts_volume", DEFAULT_VOLUME),
+        "auto_reconnect": bool(cfg.get("auto_reconnect", True)), "hotkeys_enabled": bool(cfg.get("hotkeys_enabled", True)),
+        "profiles": sorted((cfg.get("profiles") or {}).keys()),
+    }
 
 
 def save_config(payload: dict[str, Any]) -> dict[str, Any]:
     old = load_config()
     key = str(payload.get("api_key") or old.get("api_key") or "").strip()
+    backup = "" if payload.get("clear_backup_key") else str(payload.get("backup_api_key") or old.get("backup_api_key") or "").strip()
     url = str(payload.get("stream_url") if payload.get("stream_url") is not None else old.get("stream_url", "")).strip()
     delay = max(10, min(120, int(payload.get("min_delay") or old.get("min_delay") or DEFAULT_MIN_DELAY)))
     mode = str(payload.get("read_mode") or old.get("read_mode") or "all")
-    if mode not in {"all", "review_only", "off"}:
+    if mode not in READ_MODES:
         mode = "all"
-    read_existing = bool(payload.get("read_existing", old.get("read_existing", False)))
     tts_voice = str(payload.get("tts_voice", old.get("tts_voice", DEFAULT_VOICE)))
     if tts_voice not in {item["id"] for item in VOICE_CATALOG}:
         tts_voice = DEFAULT_VOICE
-    tts_speed = max(0.70, min(1.40, float(payload.get("tts_speed", old.get("tts_speed", DEFAULT_SPEED)))))
-    tts_volume = max(0, min(100, int(payload.get("tts_volume", old.get("tts_volume", DEFAULT_VOLUME)))))
-    atomic_write_json(CONFIG_FILE, {"api_key": key, "stream_url": url, "min_delay": delay, "read_mode": mode, "read_existing": read_existing, "tts_voice": tts_voice, "tts_speed": tts_speed, "tts_volume": tts_volume})
-    return {"api_key_set": bool(key), "stream_url": url, "min_delay": delay, "read_mode": mode, "read_existing": read_existing, "tts_voice": tts_voice, "tts_speed": tts_speed, "tts_volume": tts_volume}
+    new = dict(old)
+    new.update({
+        "api_key": key, "backup_api_key": backup, "stream_url": url, "min_delay": delay, "read_mode": mode,
+        "read_existing": bool(payload.get("read_existing", old.get("read_existing", False))),
+        "tts_voice": tts_voice,
+        "tts_speed": max(0.70, min(1.40, float(payload.get("tts_speed", old.get("tts_speed", DEFAULT_SPEED))))),
+        "tts_volume": max(0, min(100, int(payload.get("tts_volume", old.get("tts_volume", DEFAULT_VOLUME))))),
+        "auto_reconnect": bool(payload.get("auto_reconnect", old.get("auto_reconnect", True))),
+        "hotkeys_enabled": bool(payload.get("hotkeys_enabled", old.get("hotkeys_enabled", True))),
+    })
+    write_config(new)
+    assistant.auto_reconnect = new["auto_reconnect"]
+    return public_config(new)
 
 
 @app.route("/")
@@ -970,8 +1268,7 @@ def health():
 
 @app.route("/api/config", methods=["GET"])
 def config_get():
-    cfg = load_config()
-    return jsonify({"api_key_set": bool(cfg.get("api_key")), "stream_url": cfg.get("stream_url", ""), "min_delay": cfg.get("min_delay", DEFAULT_MIN_DELAY), "read_mode": cfg.get("read_mode", "all"), "read_existing": cfg.get("read_existing", False), "tts_voice": cfg.get("tts_voice", DEFAULT_VOICE), "tts_speed": cfg.get("tts_speed", DEFAULT_SPEED), "tts_volume": cfg.get("tts_volume", DEFAULT_VOLUME)})
+    return jsonify(public_config(load_config()))
 
 
 @app.route("/api/config", methods=["POST"])
@@ -1012,7 +1309,7 @@ def start_listener():
     payload = request.get_json(silent=True) or {}
     cfg = save_config(payload)
     stored = load_config()
-    ok, message = assistant.start(stored.get("api_key", ""), cfg["stream_url"], cfg["min_delay"], cfg["read_mode"], cfg["read_existing"])
+    ok, message = assistant.start(stored.get("api_key", ""), cfg["stream_url"], cfg["min_delay"], cfg["read_mode"], cfg["read_existing"], stored.get("backup_api_key", ""))
     return jsonify({"ok": ok, "message": message}), 200 if ok else 400
 
 
@@ -1081,7 +1378,7 @@ def speech_settings():
     if voice not in {item["id"] for item in VOICE_CATALOG}:
         return jsonify({"ok": False, "error": "That Kokoro voice is not available."}), 400
     cfg.update({"tts_voice": voice, "tts_speed": speed, "tts_volume": volume})
-    atomic_write_json(CONFIG_FILE, cfg)
+    write_config(cfg)
     settings = assistant.tts.configure(voice=voice, speed=speed, volume=volume)
     return jsonify({"ok": True, "tts": settings})
 
@@ -1114,6 +1411,158 @@ def review_clear():
     return jsonify({"ok": True})
 
 
+@app.route("/api/overlay")
+def overlay_get():
+    return jsonify(assistant.overlay_state())
+
+
+@app.route("/api/review/move", methods=["POST"])
+def review_move():
+    payload = request.get_json(silent=True) or {}
+    ok = assistant.review_queue.move(str(payload.get("channel_id") or ""), str(payload.get("where") or ""))
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/review/edit", methods=["POST"])
+def review_edit():
+    payload = request.get_json(silent=True) or {}
+    ok = assistant.review_queue.edit(str(payload.get("channel_id") or ""), payload.get("uid"), payload.get("request"))
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/review/complete", methods=["POST"])
+def review_complete():
+    payload = request.get_json(silent=True) or {}
+    item = assistant.review_queue.complete(str(payload.get("channel_id") or "") or None)
+    return jsonify({"ok": bool(item), "item": item})
+
+
+@app.route("/api/review/history")
+def review_history():
+    return jsonify({"ok": True, "history": assistant.review_queue.history_snapshot(100)})
+
+
+@app.route("/api/filters", methods=["GET", "POST"])
+def filters_route():
+    if request.method == "POST":
+        cfg = assistant.set_filters(request.get_json(silent=True) or {})
+        stored = load_config()
+        stored["filters"] = cfg
+        write_config(stored)
+        assistant.log("Speech filters updated.")
+    return jsonify({"ok": True, "filters": assistant.filter.raw})
+
+
+@app.route("/api/hotkeys", methods=["POST"])
+def hotkeys_route():
+    enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    stored = load_config()
+    stored["hotkeys_enabled"] = enabled
+    write_config(stored)
+    return jsonify({"ok": True, "hotkeys": assistant.set_hotkeys(enabled)})
+
+
+PROFILE_FIELDS = ("read_mode", "min_delay", "read_existing", "tts_voice", "tts_speed", "tts_volume")
+
+
+@app.route("/api/profiles", methods=["POST"])
+def profiles_route():
+    payload = request.get_json(silent=True) or {}
+    action, name = str(payload.get("action") or ""), " ".join(str(payload.get("name") or "").split())[:40]
+    stored = load_config()
+    profiles = dict(stored.get("profiles") or {})
+    if not name:
+        return jsonify({"ok": False, "error": "Give the profile a name."}), 400
+    if action == "save":
+        profiles[name] = {**{k: stored.get(k) for k in PROFILE_FIELDS}, "filters": assistant.filter.raw}
+        if len(profiles) > 30:
+            return jsonify({"ok": False, "error": "Maximum 30 profiles."}), 400
+    elif action == "delete":
+        profiles.pop(name, None)
+    elif action == "apply":
+        prof = profiles.get(name)
+        if not prof:
+            return jsonify({"ok": False, "error": "Profile not found."}), 404
+        stored.update({k: prof[k] for k in PROFILE_FIELDS if prof.get(k) is not None})
+        cfg = assistant.set_filters(prof.get("filters") or {})
+        stored["filters"] = cfg
+        stored["profiles"] = profiles
+        write_config(stored)
+        assistant.tts.configure(voice=stored.get("tts_voice"), speed=stored.get("tts_speed"), volume=stored.get("tts_volume"))
+        assistant.log(f"Profile applied: {name}.")
+        return jsonify({"ok": True, "config": public_config(stored), "filters": cfg})
+    else:
+        return jsonify({"ok": False, "error": "Unknown action."}), 400
+    stored["profiles"] = profiles
+    write_config(stored)
+    return jsonify({"ok": True, "profiles": sorted(profiles)})
+
+
+_update_cache: dict[str, Any] = {"at": 0.0, "data": None}
+
+
+def _version_tuple(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", v or "")[:4]) or (0,)
+
+
+@app.route("/api/update-check")
+def update_check():
+    if _update_cache["data"] and time.time() - _update_cache["at"] < 3600:
+        return jsonify(_update_cache["data"])
+    try:
+        r = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=6,
+                         headers={"Accept": "application/vnd.github+json", "User-Agent": f"NinuGamingLiveAssistant/{APP_VERSION}"})
+        if r.status_code == 404:
+            data = {"ok": True, "current": APP_VERSION, "latest": APP_VERSION, "update_available": False}
+        else:
+            r.raise_for_status()
+            j = r.json()
+            latest = str(j.get("tag_name") or "").lstrip("v")
+            data = {"ok": True, "current": APP_VERSION, "latest": latest, "url": j.get("html_url", ""),
+                    "update_available": _version_tuple(latest) > _version_tuple(APP_VERSION)}
+    except Exception as exc:
+        return jsonify({"ok": False, "current": APP_VERSION, "error": f"Could not check for updates: {exc}"}), 200
+    _update_cache.update(at=time.time(), data=data)
+    return jsonify(data)
+
+
+def _export_path(prefix: str, ext: str) -> Path:
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    return EXPORT_DIR / f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
+
+
+@app.route("/api/export/<kind>", methods=["POST"])
+def export_route(kind: str):
+    if kind == "review":
+        path = _export_path("review_queue", "csv")
+        cols = ["status", "name", "uid", "uid_region", "request", "full_comment", "confidence", "joined_at", "finished_at"]
+        rows = [{**r, "status": "waiting"} for r in assistant.review_queue.snapshot()] + assistant.review_queue.history_snapshot(500)
+        with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+            writer = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+    elif kind == "logs":
+        path = _export_path("activity_log", "txt")
+        lines = [f"{x.get('time', '')} [{x.get('level', 'info')}] {x.get('message', '')}" for x in reversed(list(assistant.logs))]
+        path.write_text("\n".join(lines) or "No log entries.", encoding="utf-8")
+    elif kind == "session":
+        path = _export_path("session_summary", "json")
+        path.write_text(json.dumps({"app": APP_NAME, "version": APP_VERSION, "exported_at": now_iso(),
+                                    "stats": assistant.session_stats(), "usage": assistant.ledger.snapshot()}, indent=2), encoding="utf-8")
+    else:
+        return jsonify({"ok": False, "error": "Unknown export type."}), 400
+    return jsonify({"ok": True, "path": str(path)})
+
+
+@app.route("/api/open-exports", methods=["POST"])
+def open_exports():
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        os.startfile(str(EXPORT_DIR))  # type: ignore[attr-defined]
+    return jsonify({"ok": True, "path": str(EXPORT_DIR)})
+
+
+
 @app.route("/api/diagnostics", methods=["POST"])
 def diagnostics():
     cfg = load_config()
@@ -1126,7 +1575,8 @@ def diagnostics():
         "quota_remaining_local": assistant.ledger.remaining_quota(),
         "runtime_seconds_remaining": int(assistant.ledger.remaining_runtime()),
         "last_error": assistant.last_error,
-        "tts": assistant.tts.settings(),
+        "tts": assistant.tts.settings(), "hotkeys": assistant.hotkeys.status(),
+        "backup_key_saved": bool(cfg.get("backup_api_key")), "using_backup_key": assistant.ledger.using_backup,
     }
     assistant.log("Local diagnostics report generated.")
     return jsonify({"ok": True, "diagnostics": result})
@@ -1180,6 +1630,7 @@ def main() -> None:
         assistant.stop_event.set()
         assistant.shutdown_event.set()
         assistant.tts.close()
+        assistant.hotkeys.stop()
         with assistant.speech_condition:
             assistant.speech_condition.notify_all()
         server.shutdown()

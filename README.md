@@ -1,6 +1,36 @@
-# NinuGaming Live Assistant 2.1.0
+# NinuGaming Live Assistant 2.2.0
 
 A Windows desktop assistant combining YouTube livestream chat reading, a visible speech pipeline, and NinuGaming's Genshin account-review queue.
+
+## New in 2.2.0: smarter chat, priority queue, better queue tools
+
+The Kokoro neural voice engine is unchanged. Everything below is around it.
+
+**Chat reading**
+- Cleans text before speaking: links become "link", emoji and `:emoji:` codes are removed, `looooool` and ALL-CAPS are tamed, long numbers (UIDs) are read digit by digit, usernames are tidied (`@Ninu_Gaming12345` → "Ninu Gaming"). Add your own **pronunciations** (`Ninu=Nee noo`).
+- **Priority queue:** Super Chats / memberships → review requests → mods / members / host → normal chat. If chat floods in, the oldest normal lines are dropped so the voice never falls minutes behind.
+- **Filters** (Tools tab): per-viewer cooldown, duplicate and copy-paste spam detection, blocked words, ignored viewers, `!command` ignore, optional skipping of non-English scripts (Bangla, Hindi, Arabic, CJK…) that an English voice cannot pronounce, and no repeated name for back-to-back messages. Review requests and Super Chats always get through.
+- New read mode: **only Super Chats, members, mods and review requests**.
+
+**Review queue**
+- UID validation (Genshin UIDs are normally 9 digits) with region hint, "Check UID" and **duplicate UID** warnings.
+- Move to top / up / down, edit a UID, mark **Done**, remove; finished reviews are kept in a history list and can be **exported to CSV**.
+
+**OBS overlays** (all options go in the URL)
+- `/obs?view=queue`, `view=chat`, `view=speaking`, `view=all`
+- `&theme=glass|dark|light|neon`, `&limit=8`, `&scale=1.3`, `&accent=ff4fa3`, `&header=0`, `&bg=solid`, `&order=chat,speaking,queue`
+- Uses a lightweight `/api/overlay` endpoint instead of the full dashboard state.
+
+**Reliability and control**
+- Quota and runtime warnings at 70% / 90% and 30 / 10 minutes left.
+- Optional **backup API key** (from a second Google project) used automatically if the main key hits its quota.
+- **Auto-reconnect:** if the live chat ends or the stream drops, the app re-checks once a minute for 10 minutes.
+- **Update check** against GitHub Releases.
+- **Global hotkeys** (Windows): `Ctrl+Alt+N` next review viewer, `Ctrl+Alt+S` stop current speech, `Ctrl+Alt+P` pause/resume voice, `Ctrl+Alt+K` skip next queued line. Can be turned off.
+- **Stream profiles:** save and re-apply voice, speed, read mode and filters.
+- **Session insights** and exports (review CSV, activity log, session summary) are saved to `%APPDATA%\NinuGamingLiveAssistant\exports`.
+- API keys are now **encrypted with Windows DPAPI** (current user only). Old plain-text keys are migrated automatically.
+- Tabs: Live / Review queue / Insights / Tools. Fixed a malformed `<html>` tag in the OBS overlay.
 
 ## New in 2.1.0: local neural speech
 
@@ -40,7 +70,7 @@ The app prefers `DmlExecutionProvider` with the FP16 model. If that cannot be cr
 
 - Read public YouTube live-chat messages aloud through the local Kokoro voice.
 - View received messages, why each message was routed/filtered, exact upcoming speech, current speech and recently spoken lines.
-- Detect Genshin account-review/queue requests and extract possible 6–12 digit UIDs.
+- Detect Genshin account-review/queue requests and extract possible UIDs (9-digit numbers preferred).
 - Keep a persistent review queue with viewer, UID, original request, confidence and detection reason.
 - Read supported Super Chats, Super Stickers, new membership events, membership milestones and gifting events.
 - Retry recoverable network/rate-limit failures and preserve YouTube continuation tokens.

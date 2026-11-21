@@ -59,31 +59,33 @@ jobs:
           name: NinuGamingLiveAssistant-Setup
           path: installer/NinuGamingLiveAssistant-Setup.exe
           retention-days: 30
+      - name: Read app version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path app.py -Pattern '^APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Publish GitHub Release with Windows installer
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.0
-          name: NinuGaming Live Assistant v2.1.0
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: NinuGaming Live Assistant v${{ steps.ver.outputs.version }}
           body: |
-            ## NinuGaming Live Assistant v2.1.0
+            ## NinuGaming Live Assistant v${{ steps.ver.outputs.version }}
 
-            A combined YouTube livestream chat reader and Genshin review-queue desktop app.
-
-            ### Neural voice
-            - Local Kokoro-82M neural text-to-speech.
-            - Selectable male and female voices, voice preview, speed and volume controls.
-            - DirectML GPU acceleration on supported Windows systems, with CPU fallback.
-            - Local model files; chat text is not sent to a paid speech service.
-
-            ### Livestream and review queue
-            - Live chat inbox and visible speech queue.
-            - Current speech and recently completed speech.
-            - Genshin UID and review-request detection.
-            - OBS browser overlay, diagnostics, retry handling, four-hour daily limit and quota safety cap.
+            ### What's new in 2.2
+            - **Smarter chat reading:** links, emoji and `:emoji:` codes are cleaned up, repeated letters and ALL-CAPS are tamed, UIDs are read digit by digit, usernames are tidied, and a pronunciation list is supported.
+            - **Priority speech queue:** Super Chats and memberships first, then review requests, then mods/members, then normal chat. Old chat is dropped when the queue gets crowded so the voice never falls minutes behind.
+            - **Filters:** viewer cooldown, duplicate and copy-paste spam detection, blocked words and viewers, bot-command ignore, and skipping non-English scripts the English voice cannot pronounce.
+            - **Review queue:** UID validation and region, duplicate-UID warning, reorder / edit / Done, finished-review history and CSV export.
+            - **OBS:** separate queue, chat and "now speaking" overlays with themes, size, colour and animations; lightweight overlay endpoint; fixed an HTML typo.
+            - **Reliability:** quota and runtime warnings, optional backup API key, auto-reconnect when a stream drops, update check.
+            - **Security and control:** API keys encrypted with Windows DPAPI, optional global hotkeys, stream profiles, session insights and exports.
+            - **Interface:** tabs for Live / Review queue / Insights / Tools.
+            - The Kokoro neural voice engine is unchanged.
 
             ### Installation
             Download NinuGamingLiveAssistant-Setup.exe, run it, and follow the installer.
-            The installer includes the app, neural voice model files, and runtime prerequisites.
           files: installer/NinuGamingLiveAssistant-Setup.exe
           draft: false
           prerelease: false

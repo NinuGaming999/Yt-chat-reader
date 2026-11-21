@@ -1,8 +1,78 @@
-<!doctype html><nhtml lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NinuGaming Live Assistant Overlay</title>
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NinuGaming Live Assistant Overlay</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:transparent;color:#f5f7ff;font-family:Inter,Segoe UI,Arial,sans-serif;overflow:hidden}.wrap{padding:18px}.panel{max-width:1120px;margin:auto;border:1px solid #ffffff24;border-radius:22px;background:linear-gradient(135deg,#080d17e8,#151d30df);backdrop-filter:blur(14px);box-shadow:0 20px 60px #0008;overflow:hidden}.head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #ffffff16}.title{font-size:20px;font-weight:950;letter-spacing:-.03em}.subtitle{font-size:11px;color:#aab8ce;margin-top:3px}.live{font-size:10px;letter-spacing:.12em;color:#76e6b6;font-weight:900}.section{padding:13px 18px}.section h2{font-size:12px;color:#9caec7;letter-spacing:.14em;text-transform:uppercase;margin:0 0 8px}.speech{border:1px solid #2b7e87;background:#102b37;padding:12px 14px;border-radius:13px}.speech .name{font-size:11px;color:#79dde2;font-weight:900}.speech .text{font-size:15px;font-weight:750;margin-top:4px;overflow-wrap:anywhere}.rows{display:flex;flex-direction:column;gap:7px}.row{display:grid;grid-template-columns:34px 1fr 120px;gap:10px;align-items:center;padding:9px 10px;border:1px solid #ffffff13;background:#ffffff08;border-radius:10px}.rank{color:#b7a5ff;font-size:16px;font-weight:950}.name{font-weight:850;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.uid{font-size:10px;color:#75dbe7;font-family:Consolas,monospace}.request{grid-column:2/4;color:#b9c6d9;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.empty{font-size:11px;color:#8b9bb1;text-align:center;padding:18px}.foot{display:flex;justify-content:space-between;color:#7c8ca3;padding:10px 19px;font-size:9px;border-top:1px solid #ffffff13}
-</style></head><body><div class="wrap"><div class="panel"><div class="head"><div><div class="title">NinuGaming · Live Assistant</div><div class="subtitle">Live Genshin review queue</div></div><div class="live" id="status">WAITING</div></div><div class="section"><h2>Currently reading</h2><div class="speech" id="speech"><div class="name">Voice assistant</div><div class="text">Waiting for chat…</div></div></div><div class="section"><h2>Next viewers · <span id="count">0</span></h2><div class="rows" id="rows"><div class="empty">No one is waiting yet.</div></div></div><div class="foot"><span>Managed by NinuGaming Live Assistant</span><span id="sync">Connecting…</span></div></div></div>
+/* OBS browser source. Options go in the URL, e.g.  /obs?view=queue&theme=neon&limit=8&scale=1.2&accent=ff4fa3
+   view   = all | queue | speaking | chat         theme = glass | dark | light | neon
+   limit  = rows to show                           scale = 0.6 - 2.5 (text size)
+   accent = hex colour without #                   header = 0 hides the title bar
+   bg     = solid (adds a solid background)        order = chat,speaking,queue (panel order for view=all) */
+:root{--accent:#76e6b6;--fg:#f5f7ff;--muted:#a9b8ce;--panel:linear-gradient(135deg,#080d17e8,#151d30df);--card:#ffffff0c;--line:#ffffff22;--speak:#102b37;--speakline:#2b7e87;--scale:1}
+body.light{--fg:#18202e;--muted:#4b5a72;--panel:linear-gradient(135deg,#ffffffee,#eef2fbee);--card:#0000000a;--line:#00000022;--speak:#e4f6f8;--speakline:#59b7c2}
+body.dark{--panel:#0b0f18;--card:#ffffff0d}
+body.neon{--panel:linear-gradient(135deg,#0a0618ee,#16093aee);--line:#b46bff66;--speak:#1d0b3a;--speakline:var(--accent)}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:transparent;color:var(--fg);font-family:Inter,"Segoe UI",Arial,sans-serif;overflow:hidden;font-size:calc(14px*var(--scale))}
+body.solid{background:#0b0f18}
+.wrap{padding:.9em}.panel{max-width:70em;margin:auto;border:1px solid var(--line);border-radius:1.5em;background:var(--panel);backdrop-filter:blur(14px);box-shadow:0 1.4em 4em #0008;overflow:hidden}
+body.neon .panel{box-shadow:0 0 2em #b46bff55}
+.head{display:flex;align-items:center;justify-content:space-between;padding:1em 1.3em;border-bottom:1px solid var(--line)}
+.title{font-size:1.4em;font-weight:900;letter-spacing:-.03em}.subtitle{font-size:.8em;color:var(--muted);margin-top:.2em}
+.live{font-size:.75em;letter-spacing:.12em;color:var(--accent);font-weight:900}.live.off{color:#ff8da1}
+.section{padding:.9em 1.2em}.section+.section{border-top:1px solid var(--line)}
+h2{font-size:.8em;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin:0 0 .6em}
+.speech{border:1px solid var(--speakline);background:var(--speak);padding:.8em 1em;border-radius:.9em;display:flex;gap:.9em;align-items:center}
+.speech .name{font-size:.8em;color:var(--accent);font-weight:900}.speech .text{font-size:1.1em;font-weight:750;margin-top:.25em;overflow-wrap:anywhere}
+.bars{display:flex;gap:.2em;align-items:flex-end;height:1.6em;min-width:1.6em}.bars i{width:.3em;background:var(--accent);border-radius:.2em;height:25%}
+.speaking .bars i{animation:bar .9s ease-in-out infinite}.bars i:nth-child(2){animation-delay:.15s}.bars i:nth-child(3){animation-delay:.3s}.bars i:nth-child(4){animation-delay:.45s}
+@keyframes bar{0%,100%{height:20%}50%{height:100%}}
+.rows{display:flex;flex-direction:column;gap:.5em}
+.row{display:grid;grid-template-columns:2.4em 1fr auto;gap:.7em;align-items:center;padding:.6em .8em;border:1px solid var(--line);background:var(--card);border-radius:.8em}
+.row.new{animation:slide .45s ease-out}.row.first{border-color:var(--accent);box-shadow:0 0 1.2em color-mix(in srgb,var(--accent) 35%,transparent);animation:pulse 2.4s ease-in-out infinite}
+@keyframes slide{from{opacity:0;transform:translateX(-1.5em)}to{opacity:1;transform:none}}
+@keyframes pulse{50%{box-shadow:0 0 .4em color-mix(in srgb,var(--accent) 20%,transparent)}}
+.rank{color:var(--accent);font-size:1.15em;font-weight:950}.name{font-weight:850;font-size:.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uid{font-size:.75em;color:var(--accent);font-family:Consolas,monospace}.uid.bad{color:#ffb86b}.request{grid-column:2/4;color:var(--muted);font-size:.75em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat .row{grid-template-columns:1fr}.msg{font-size:.9em;overflow-wrap:anywhere}.msg b{color:var(--accent)}.badge{font-size:.7em;border:1px solid var(--line);border-radius:.5em;padding:.05em .4em;margin-left:.4em;color:var(--muted)}
+.paid{border-color:#ffd166}.empty{font-size:.85em;color:var(--muted);text-align:center;padding:1em}
+.foot{display:flex;justify-content:space-between;color:var(--muted);padding:.7em 1.3em;font-size:.7em;border-top:1px solid var(--line)}
+.hide{display:none}
+</style></head><body>
+<div class="wrap"><div class="panel">
+  <div class="head" id="head"><div><div class="title">NinuGaming · Live Assistant</div><div class="subtitle">Live Genshin review queue</div></div><div class="live off" id="status">WAITING</div></div>
+  <div id="panels"></div>
+  <div class="foot" id="foot"><span>Managed by NinuGaming Live Assistant</span><span id="sync">Connecting…</span></div>
+</div></div>
 <script>
-const $=id=>document.getElementById(id);function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function fmt(s){const d=new Date(s);return isNaN(d)?'':d.toLocaleTimeString()}
-async function load(){try{const r=await fetch('/api/state');const d=await r.json();$('status').textContent=d.connected?'LIVE':d.running?'CONNECTING':'OFFLINE';const c=d.currently_speaking;$('speech').innerHTML=c?`<div class="name">${esc(c.name)}</div><div class="text">${esc(c.text)}</div>`:`<div class="name">Voice assistant</div><div class="text">${d.speech_paused?'Speech paused':'Waiting for chat…'}</div>`;const q=d.review_queue||[];$('count').textContent=q.length;$('rows').innerHTML=q.length?q.slice(0,5).map((x,i)=>`<div class="row"><div class="rank">${i+1}</div><div class="name">${esc(x.name||'Viewer')}</div><div class="uid">${esc(x.uid||'not given')}</div><div class="request">${esc(x.full_comment||x.request||'Account review')}</div></div>`).join(''):'<div class="empty">No one is waiting yet.</div>';$('sync').textContent='Updated '+new Date().toLocaleTimeString()}catch(e){$('status').textContent='APP OFFLINE'}}load();setInterval(load,1000);
+const q=new URLSearchParams(location.search),$=id=>document.getElementById(id);
+const view=q.get('view')||'all',theme=q.get('theme')||'glass',scale=Math.max(.6,Math.min(2.5,+q.get('scale')||1));
+const limit=Math.max(1,Math.min(20,+q.get('limit')||0));
+document.body.classList.add(theme);if(q.get('bg')==='solid')document.body.classList.add('solid');
+document.documentElement.style.setProperty('--scale',scale);
+if(/^[0-9a-f]{3,8}$/i.test(q.get('accent')||''))document.documentElement.style.setProperty('--accent','#'+q.get('accent'));
+if(q.get('header')==='0'){$('head').classList.add('hide');$('foot').classList.add('hide')}
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const order=(q.get('order')||'speaking,queue').split(',').filter(x=>['chat','speaking','queue'].includes(x));
+const panels=view==='all'?order:[view];
+$('panels').innerHTML=panels.map(p=>p==='speaking'?'<div class="section"><h2>Currently reading</h2><div class="speech" id="speech"><div class="bars"><i></i><i></i><i></i><i></i></div><div><div class="name">Voice assistant</div><div class="text">Waiting for chat…</div></div></div></div>'
+ :p==='queue'?'<div class="section"><h2>Next viewers · <span id="count">0</span></h2><div class="rows" id="rows"></div></div>'
+ :'<div class="section chat"><h2>Live chat</h2><div class="rows" id="chat"></div></div>').join('');
+const seenQueue=new Set(),seenChat=new Set();let chatInit=false;
+function render(d){
+  $('status').textContent=d.connected?'LIVE':d.running?'CONNECTING':'OFFLINE';$('status').classList.toggle('off',!d.connected);
+  const sp=$('speech');if(sp){const c=d.currently_speaking;sp.classList.toggle('speaking',!!c);
+    sp.querySelector('.name').textContent=c?c.name:'Voice assistant';
+    sp.querySelector('.text').textContent=c?c.text:(d.speech_paused?'Speech paused':'Waiting for chat…')}
+  const rows=$('rows');if(rows){const n=limit||5,list=(d.review_queue||[]).slice(0,n);$('count').textContent=d.review_queue_count;
+    rows.innerHTML=list.length?list.map((x,i)=>{const key=(x.name||'')+'|'+(x.uid||'');const fresh=!seenQueue.has(key);seenQueue.add(key);
+      const uidTxt=x.uid&&x.uid!=='not given'?x.uid+(x.uid_region?' · '+x.uid_region:''):'UID not given';
+      return `<div class="row${i===0?' first':''}${fresh?' new':''}"><div class="rank">${i+1}</div><div class="name">${esc(x.name||'Viewer')}${i===0?'<span class="badge">NEXT</span>':''}</div><div class="uid${x.uid_valid===false&&x.uid!=='not given'?' bad':''}">${esc(uidTxt)}</div><div class="request">${esc(x.full_comment||x.request||'Account review')}</div></div>`}).join(''):'<div class="empty">No one is waiting yet.</div>'}
+  const chat=$('chat');if(chat){const n=limit||6,fresh=(d.chat||[]).slice().reverse().filter(m=>!seenChat.has(m.id));
+    for(const m of fresh){seenChat.add(m.id);
+      const el=document.createElement('div');el.className='row new'+(['superChatEvent','superStickerEvent','newSponsorEvent'].includes(m.kind)?' paid':'');
+      el.innerHTML=`<div class="msg"><b>${esc(m.name)}</b>${m.is_owner?'<span class="badge">HOST</span>':m.is_mod?'<span class="badge">MOD</span>':m.is_member?'<span class="badge">MEMBER</span>':''} ${esc(m.text)}</div>`;chat.appendChild(el)}
+    chatInit=true;while(chat.children.length>n)chat.removeChild(chat.firstChild);
+    if(seenChat.size>500)seenChat.clear()}
+  $('sync').textContent='Updated '+new Date().toLocaleTimeString()}
+async function load(){try{render(await (await fetch('/api/overlay')).json())}catch(e){$('status').textContent='APP OFFLINE';$('status').classList.add('off')}}
+load();setInterval(load,1000);
 </script></body></html>
